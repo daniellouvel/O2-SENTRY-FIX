@@ -1,0 +1,17 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# VSCode (fichiers generes automatiquement)
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch/
+
+# Artefacts de compilation
+*.o
+*.hex
+*.elf
+
+# Outils internes
+.claude/
