@@ -1,5 +1,5 @@
 /*
- * Analyseur O2 portable - Arduino Nano
+ * Analyseur O2 fixe (de paillasse, alimentation 220V AC) - Arduino Nano
  * Capteur O2 via ADS1115 (A0), LCD 1602 I2C, RTC DS3231,
  * 3 boutons TTP223 (D2/D3/D4), imprimante TSC TH240 (D10/D11).
  *

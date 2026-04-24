@@ -127,33 +127,76 @@ Connexion directe possible :
 
 ---
 
-## Alimentation
+## Alimentation 220V AC
 
-### Option A : Batterie 9V (simple)
+Appareil fixe de paillasse alimenté sur le **secteur 220V AC**.
 
-```
-  Batterie 9V (+) ──[interrupteur]── VIN Nano
-  Batterie 9V (−) ─────────────────── GND Nano
-```
-
-Le régulateur interne du Nano fournit le 5V (max ~500 mA). Suffisant pour LCD + ADS + RTC + TTP223 au repos. **Autonomie ~3-5 h** avec une 9V alcaline.
-
-### Option B : Li-Ion 3.7V + boost 5V (recommandé, plus longue autonomie)
+### Schéma d'alimentation
 
 ```
-  18650 3.7V ──── Module TP4056 (charge USB) ──── MT3608 boost 5V ──── Nano 5V
+  Prise 220V AC
+       │
+   ┌───┴────┐
+   │ Fusible│  1 A temporisé
+   │ 1A (T) │
+   └───┬────┘
+       │
+   ┌───┴────────┐
+   │Interrupteur│  bipolaire, coupe phase + neutre
+   │  bipolaire │
+   └───┬────────┘
+       │
+       ├─────────────────────► Bloc secteur 9V DC 1A ──► jack Nano (VIN)
+       │                                                 (5V interne Nano)
+       │
+       └─────────────────────► Imprimante TSC TH240 (bloc 24V d'origine)
 ```
 
-Plus économique, rechargeable via USB, autonomie **10-15 h**.
+**Points clés** :
+- **Un seul interrupteur bipolaire** coupe tout (Nano + imprimante)
+- **Fusible 1 A temporisé (T)** en entrée, toujours sur la **phase**
+- **Bloc secteur 9V DC 1A** type "adaptateur mural" standard, jack 5.5/2.1 mm → branché sur le jack DC du Nano
+- L'**imprimante garde son bloc 24V d'origine** (non modifié)
+- **Masses séparées** : le GND du Nano et le GND de l'imprimante se rejoignent uniquement via le fil TTL de données (cf. section imprimante)
 
-### Consommation approximative
+### Câblage 220V (côté secteur)
 
-| État | Consommation |
-|------|--------------|
-| Nano + LCD éteint | ~20 mA |
-| + LCD allumé (rétroéclairé) | ~45 mA |
-| + ADS en lecture continue | ~50 mA |
-| + impression (pic, ~2 s) | **à charge imprimante**, pas sur Nano |
+```
+  Phase (marron) ──► Fusible ──► Interrupteur ──┬── Bloc 9V DC
+                                                 │
+  Neutre (bleu) ───────────────► Interrupteur ──┼── Bloc 9V DC
+                                                 │
+                                                 └── Imprimante (via prise)
+  Terre (vert/jaune) ──► boîtier métallique (si applicable)
+```
+
+### Sécurité 220V — ⚠️ OBLIGATOIRE
+
+- **Toutes les connexions 220V sous gaine thermo ou dans un domino fermé**, aucun contact exposé
+- **Distance minimale** de 4 mm entre pistes/connexions 220V et basse tension (règle "creepage")
+- **Boîtier plastique ABS ignifuge** (préféré) ou **boîtier métallique relié à la terre**
+- **Décharge de traction** sur le câble secteur (passe-câble à vis ou serre-câble)
+- Vérifier que le **bloc secteur 9V** est marqué **CE** et double isolation (symbole ⊡)
+
+### Consommation
+
+| État | Consommation côté 220V |
+|------|-------------------------|
+| Veille (Nano + LCD + ADS) | ~2 W |
+| Impression d'étiquette (pic ~2 s) | jusqu'à 30 W |
+
+Un transformateur 9V/1A (9 VA) + imprimante 24V/2A (48 VA) = **~60 VA max**, largement couvert par un fusible 1 A temporisé.
+
+### Option alternative : module AC-DC intégré (HLK-PM01)
+
+Pour un montage plus compact (pas de bloc secteur externe), on peut intégrer un module **HLK-PM01** (220V AC → 5V DC, 600 mA) directement dans le boîtier, branché sur le pin **5V** du Nano (en bypassant le régulateur).
+
+```
+  220V AC ──► HLK-PM01 ──► 5V DC ──► pin 5V du Nano (pas VIN)
+                           GND DC ──► GND du Nano
+```
+
+**⚠️ À ne faire que si tu maîtrises les règles d'isolation 220V en PCB.** Sinon, reste sur le bloc secteur externe : c'est plus sûr et déjà certifié CE.
 
 ---
 

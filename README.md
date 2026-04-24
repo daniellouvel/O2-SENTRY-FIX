@@ -1,6 +1,6 @@
 # O2-SENTRY-FIX
 
-**Analyseur portable d'oxygène pour plongée** — basé sur Arduino Nano, avec impression d'étiquette d'analyse de mélange Nitrox/Trimix.
+**Analyseur fixe d'oxygène pour plongée** (station de paillasse, alimentation secteur 220V AC) — basé sur Arduino Nano, avec impression d'étiquette d'analyse de mélange Nitrox/Trimix.
 
 Projet de remplacement d'un analyseur O2 commercial défaillant, entièrement DIY et documenté.
 
@@ -31,8 +31,10 @@ Projet de remplacement d'un analyseur O2 commercial défaillant, entièrement DI
 | 3× TTP223 | Boutons tactiles capacitifs | mode par défaut (HIGH actif) |
 | Imprimante TSC TH240 | Étiqueteuse thermique | communication série 9600 bauds |
 | Cellule O2 (ex: R-17 Med, R-22, OOM-202) | Capteur galvanique | sortie ~9-13 mV à l'air |
-| Batterie 9V + interrupteur | Alimentation portable | ou Li-Ion 3.7V + step-up 5V |
-| Boîtier + câblage | — | fils 22 AWG, connecteurs JST |
+| Bloc secteur 9V DC 1A (jack 5.5/2.1 mm) | Alimentation Nano | depuis 220V AC |
+| Interrupteur secteur + porte-fusible | Sécurité 220V | fusible 1A temporisé |
+| Boîtier de paillasse (type coffret ABS) | Intégration fixe | avec passe-câbles |
+| Câblage | — | fils 22 AWG, domino ou bornier |
 
 ---
 
