@@ -31,6 +31,7 @@ Projet de remplacement d'un analyseur O2 commercial défaillant, entièrement DI
 | 3× TTP223 | Boutons tactiles capacitifs | mode par défaut (HIGH actif) |
 | Imprimante TSC TH240 | Étiqueteuse thermique | communication série 9600 bauds |
 | Cellule O2 (ex: R-17 Med, R-22, OOM-202) | Capteur galvanique | sortie ~9-13 mV à l'air |
+| DS18B20 (TO-92) + pull-up 4.7 kΩ | Capteur de température | **optionnel**, pour compensation thermique 0.3 %/°C |
 | Bloc secteur 9V DC 1A (jack 5.5/2.1 mm) | Alimentation Nano | depuis 220V AC |
 | Interrupteur secteur + porte-fusible | Sécurité 220V | fusible 1A temporisé |
 | Boîtier de paillasse (type coffret ABS) | Intégration fixe | avec passe-câbles |
@@ -50,6 +51,7 @@ Voir [WIRING.md](WIRING.md) pour le détail complet avec schémas ASCII.
 | Bouton GAUCHE (TTP223) | D2 |
 | Bouton CENTRE (TTP223) | D3 |
 | Bouton DROITE (TTP223) | D4 |
+| DS18B20 DQ (optionnel) | D5 (avec pull-up 4.7 kΩ vers 5V) |
 | Imprimante TSC RX | D11 (TX du Nano) |
 | Imprimante TSC TX | D10 (RX du Nano) |
 | Cellule O2 (+) | ADS1115 A0 |
@@ -76,9 +78,26 @@ Voir [INSTALLATION.md](INSTALLATION.md) — utilise **PlatformIO dans VSCode**.
 
 | Bouton | Appui court | Appui long (3 s) |
 |--------|-------------|-------------------|
-| **GAUCHE** | ppO2 − 0.1 (min 1.0) | — |
-| **CENTRE** | Imprimer étiquette (si stable) | Entrer en réglage heure |
+| **GAUCHE** | ppO2 − 0.1 (min 1.0) | Consulter l'historique |
+| **CENTRE** | Imprimer étiquette (si stable + calibré) | Entrer en réglage heure |
 | **DROITE** | ppO2 + 0.1 (max 1.6) | Lancer la calibration |
+
+### Mode Historique
+
+Les 10 dernières analyses imprimées sont conservées en EEPROM (FIFO circulaire).
+
+```
+┌────────────────┐
+│#3/10 fO2:32.0% │  ← position + pourcentage
+│24/04 12:45 M34 │  ← date, heure, MOD
+└────────────────┘
+```
+
+| Bouton | Appui court |
+|--------|-------------|
+| **GAUCHE** | Analyse plus ancienne |
+| **DROITE** | Analyse plus récente |
+| **CENTRE** | Sortir |
 
 Le tag `[OK]` s'affiche uniquement lorsque l'écart max−min sur les 15 dernières mesures est < 0.1 %. L'impression est bloquée tant que la mesure est instable (`...`).
 
@@ -95,7 +114,11 @@ Le tag `[OK]` s'affiche uniquement lorsque l'écart max−min sur les 15 derniè
 1. **Appui long CENTRE** (3 s)
 2. Séquence : **Heure → Minute → Jour → Mois → Année**
 3. GAUCHE / DROITE pour modifier, CENTRE pour valider et passer au champ suivant
-4. Après l'année, l'horloge est sauvegardée et on revient en mode Lecture
+4. Le champ actif est encadré par `[..]` sur l'afficheur
+5. Après l'année, l'horloge est sauvegardée et on revient en mode Lecture
+6. **Appui long GAUCHE à tout moment = annuler sans sauver**
+
+> À la première mise sous tension (ou après une perte d'alimentation du RTC), l'analyseur entre automatiquement dans ce mode pour forcer le réglage.
 
 ### Calcul MOD
 

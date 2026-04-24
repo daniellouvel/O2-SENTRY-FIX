@@ -13,12 +13,13 @@ Schéma complet de connexion des modules à l'Arduino Nano.
 | D2 | Input | Bouton GAUCHE (TTP223) |
 | D3 | Input | Bouton CENTRE (TTP223) |
 | D4 | Input | Bouton DROITE (TTP223) |
+| D5 | I/O | OneWire DS18B20 (capteur de température, **optionnel**) |
 | D10 | Input | RX SoftwareSerial (vers TX imprimante) |
 | D11 | Output | TX SoftwareSerial (vers RX imprimante) |
 | 5V | Power | Alimentation modules logiques |
 | 3.3V | Power | (optionnel — TTP223 peut être en 3.3V) |
 | GND | Power | Masse commune |
-| VIN | Power | Entrée batterie 7-12V |
+| VIN | Power | Entrée bloc secteur 9V DC |
 
 ---
 
@@ -94,6 +95,40 @@ La cellule galvanique produit une tension faible (9–13 mV à l'air). Le gain `
 - Par défaut : **sortie HIGH quand touché** (configuration attendue par le code)
 - Si tu inverses le jumper `A` : sortie LOW quand touché → **ne fonctionnera pas**, il faudrait inverser la logique du code.
 - Le jumper `B` passe en mode "toggle" (bascule) — **à laisser ouvert**, le code gère lui-même l'état.
+
+---
+
+## Capteur de température DS18B20 (optionnel)
+
+Le firmware détecte automatiquement la présence du DS18B20 au démarrage. **Si absent, aucune compensation n'est appliquée** (comportement par défaut). Si présent, la mesure O2 est corrigée de la dérive thermique de la cellule galvanique (~0.3 %/°C).
+
+```
+          DS18B20 (TO-92, vu de face, plat vers soi)
+               ┌─────┐
+               │  •  │
+               │ DS  │
+               │18B20│
+               └┬─┬─┬┘
+                │ │ │
+               GND│ VDD
+                  DQ
+                  │
+          4.7 kΩ  │      (pull-up OBLIGATOIRE)
+             ┌────┼────── 5V Nano
+             │    │
+             └────┴────── D5 Nano
+                  │
+                 GND ─── GND Nano
+                 VDD ─── 5V  Nano
+```
+
+**Points importants** :
+- La résistance de **pull-up 4.7 kΩ** entre DQ et VCC est **obligatoire** (le bus OneWire utilise la collecteur ouvert).
+- Pour une mesure stable, placer le DS18B20 **au plus près de la cellule O2** (même enceinte/chambre).
+- En mode "parasite power" (2 fils), le câblage est différent — **non utilisé ici**, on câble les 3 fils.
+- La température de calibration est sauvegardée en EEPROM, donc la compensation est relative à l'environnement thermique du moment de la calibration.
+
+**Câblage avec plusieurs capteurs** : le bus OneWire supporte plusieurs DS18B20 en parallèle sur le même fil, mais le firmware ne lit que l'**index 0** (le premier détecté). Un seul capteur suffit.
 
 ---
 
@@ -215,6 +250,7 @@ Pour un montage plus compact (pas de bloc secteur externe), on peut intégrer un
 - [ ] Pile CR2032 insérée dans le RTC (sinon perte de l'heure à chaque coupure)
 - [ ] Bloc secteur imprimante branché séparément
 - [ ] Adresse LCD (0x27 ou 0x3F) vérifiée avec un scanner I2C
+- [ ] (Si DS18B20) Résistance pull-up 4.7 kΩ entre D5 et 5V bien présente
 
 ---
 
