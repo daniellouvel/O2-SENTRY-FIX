@@ -14,6 +14,9 @@ Schéma complet de connexion des modules à l'Arduino Nano.
 | D3 | Input | Bouton CENTRE (TTP223) |
 | D4 | Input | Bouton DROITE (TTP223) |
 | D5 | I/O | OneWire DS18B20 (capteur de température, **optionnel**) |
+| D6 | Output | LED RGB WS2812B (data) |
+| D7 | Input | PN532 IRQ (lecteur RFID, **optionnel**) |
+| D8 | Output | PN532 RESET (lecteur RFID, **optionnel**) |
 | D10 | Input | RX SoftwareSerial (vers TX imprimante) |
 | D11 | Output | TX SoftwareSerial (vers RX imprimante) |
 | 5V | Power | Alimentation modules logiques |
@@ -129,6 +132,105 @@ Le firmware détecte automatiquement la présence du DS18B20 au démarrage. **Si
 - La température de calibration est sauvegardée en EEPROM, donc la compensation est relative à l'environnement thermique du moment de la calibration.
 
 **Câblage avec plusieurs capteurs** : le bus OneWire supporte plusieurs DS18B20 en parallèle sur le même fil, mais le firmware ne lit que l'**index 0** (le premier détecté). Un seul capteur suffit.
+
+---
+
+## Lecteur RFID PN532 (optionnel)
+
+Module compatible Adafruit PN532 ou clones (NXP). Il partage le bus I2C avec les autres modules — adresse 0x24, **aucun conflit** avec LCD (0x27), ADS1115 (0x48) et RTC (0x68).
+
+### Configuration du module
+
+Sur le PN532 type "Adafruit shield" ou "Elechouse v3", il y a deux **switches DIP** ou jumpers de mode :
+
+| Mode | SEL0 | SEL1 |
+|------|------|------|
+| **I2C** (utilisé ici) | OFF | ON |
+| HSU (UART)            | OFF | OFF |
+| SPI                   | ON  | OFF |
+
+→ Vérifier que les switches sont bien sur **I2C**.
+
+### Câblage
+
+```
+       PN532
+   ┌────────────┐
+   │ VCC ───────┼── 5V Nano (certains modules sont en 3.3V uniquement,
+   │            │   verifier la fiche - en general le module a un
+   │            │   regulateur 3.3V interne et accepte 5V)
+   │ GND ───────┼── GND Nano
+   │ SDA ───────┼── A4 Nano (partage avec autres modules I2C)
+   │ SCL ───────┼── A5 Nano
+   │ IRQ ───────┼── D7 Nano (signal "carte detectee")
+   │ RSTO/RSTPDN┼── D8 Nano (reset hardware)
+   └────────────┘
+```
+
+### Format des badges
+
+Le firmware lit le **nom du plongeur** sur des cartes **Mifare Classic 1K** (les plus courantes, ~0.20€/pièce).
+
+| Paramètre | Valeur |
+|-----------|--------|
+| Bloc lu | **4** (premier bloc de données du secteur 1) |
+| Authentification | Clé A par défaut `FF FF FF FF FF FF` |
+| Format | Texte ASCII brut, null-terminé |
+| Longueur max | 14 caractères |
+
+### Encodage d'un badge avec un téléphone Android
+
+1. Installer l'application **MIFARE Classic Tool** (gratuite, Google Play)
+2. Bouton "Write tag" → "Write block"
+3. Approcher la carte du téléphone
+4. Choisir : **secteur 1, bloc 0** (= bloc 4 absolu), **clé A par défaut**
+5. Saisir le nom en hex (ex. `DUPONT` = `44 55 50 4F 4E 54`)
+6. Compléter avec des `00` jusqu'à 16 octets
+
+> Astuce : l'app propose un mode "Write text" qui fait la conversion ASCII → hex automatiquement.
+
+### Workflow d'utilisation
+
+- **Sans badge** : appui CENTRE imprime l'étiquette avec une ligne `Plongeur: ____________` à remplir au stylo
+- **Avec badge** :
+  - Si l'analyse est stable : impression immédiate avec le nom
+  - Sinon : mode "armé" pendant 30s, impression auto dès que `[OK]`. Le LED clignote en bleu.
+  - Annulation manuelle : appui CENTRE pendant l'attente
+  - Re-passer le même badge réinitialise le timer 30s
+
+---
+
+## LED RGB de signalisation (WS2812B)
+
+Une LED RGB adressable (NeoPixel) donne un état visible **de loin**, sans avoir à lire le LCD.
+
+### Câblage
+
+```
+   WS2812B (module 1 LED ou strip)
+   ┌──────────┐
+   │ VCC/5V ──┼── 5V Nano
+   │ GND ─────┼── GND Nano
+   │ DI/DIN ──┼── D6 Nano (data)
+   └──────────┘
+```
+
+> Une seule LED suffit. Si tu utilises un strip, le firmware ne pilote que la LED d'index 0.
+
+### Codes couleur
+
+| Couleur | Comportement | Signification |
+|---------|--------------|---------------|
+| ⚪ Blanc tamisé | fixe | Splash de démarrage |
+| 🟠 Orange | fixe | Mesure en cours de stabilisation |
+| 🟢 Vert | fixe | Stable + calibré, prêt à imprimer |
+| 🔵 Bleu | clignotant 1 Hz | Badge détecté, mode armé (attente stab.) |
+| 🟣 Violet | fixe (1.5s) | Impression en cours |
+| 🟡 Jaune | fixe | Mode réglage de l'heure |
+| 🔵 Cyan | fixe | Consultation de l'historique |
+| 🔴 Rouge | clignotant ou fixe | Erreur (non calibré, cellule usée, badge invalide) |
+
+> La luminosité est limitée à `LED_BRIGHTNESS = 80/255` dans le firmware pour éviter d'éblouir et de tirer trop de courant. Modifiable dans `main.cpp`.
 
 ---
 
@@ -251,6 +353,9 @@ Pour un montage plus compact (pas de bloc secteur externe), on peut intégrer un
 - [ ] Bloc secteur imprimante branché séparément
 - [ ] Adresse LCD (0x27 ou 0x3F) vérifiée avec un scanner I2C
 - [ ] (Si DS18B20) Résistance pull-up 4.7 kΩ entre D5 et 5V bien présente
+- [ ] (Si PN532) DIP switches en mode **I2C** (SEL0 OFF, SEL1 ON)
+- [ ] (Si PN532) Clé A par défaut `FF FF FF FF FF FF` non modifiée sur la carte
+- [ ] LED WS2812B en sens correct : DIN côté Nano, DOUT vers la suivante (si plusieurs)
 
 ---
 

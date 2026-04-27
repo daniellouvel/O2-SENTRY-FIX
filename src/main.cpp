@@ -6,6 +6,9 @@
  * Horloge        : DS3231 I2C @0x68
  * Boutons        : TTP223 sur D2 (GAUCHE) / D3 (CENTRE) / D4 (DROITE)
  * Temperature    : DS18B20 sur D5 (OPTIONNEL - compensation si detecte)
+ * LED RGB        : WS2812B (NeoPixel) sur D6 - feedback visuel
+ * Lecteur RFID   : PN532 I2C @0x24, IRQ D7, RESET D8
+ *                  Lit le nom du plongeur en bloc 4 (Mifare Classic)
  * Imprimante     : TSC TH240 via SoftwareSerial D10 (RX) / D11 (TX)
  *
  * Architecture : machine a etats, aucun delay(), tout sur millis().
@@ -20,18 +23,23 @@
 #include <EEPROM.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <Adafruit_PN532.h>
+#include <Adafruit_NeoPixel.h>
 
 // ============================================================================
 //  CONFIGURATION MATERIELLE
 // ============================================================================
-static const uint8_t PIN_BTN_LEFT   = 2;
-static const uint8_t PIN_BTN_CENTER = 3;
-static const uint8_t PIN_BTN_RIGHT  = 4;
-static const uint8_t PIN_TEMP       = 5;   // DS18B20 OneWire (optionnel)
-static const uint8_t PIN_PRINTER_RX = 10;
-static const uint8_t PIN_PRINTER_TX = 11;
-static const uint8_t LCD_ADDR       = 0x27;
-static const uint8_t ADS_O2_CHANNEL = 0;
+static const uint8_t PIN_BTN_LEFT     = 2;
+static const uint8_t PIN_BTN_CENTER   = 3;
+static const uint8_t PIN_BTN_RIGHT    = 4;
+static const uint8_t PIN_TEMP         = 5;   // DS18B20 OneWire (optionnel)
+static const uint8_t PIN_LED_RGB      = 6;   // WS2812B data
+static const uint8_t PIN_PN532_IRQ    = 7;
+static const uint8_t PIN_PN532_RESET  = 8;
+static const uint8_t PIN_PRINTER_RX   = 10;
+static const uint8_t PIN_PRINTER_TX   = 11;
+static const uint8_t LCD_ADDR         = 0x27;
+static const uint8_t ADS_O2_CHANNEL   = 0;
 
 // ============================================================================
 //  CONSTANTES LOGICIEL
@@ -55,6 +63,15 @@ static const float    ADS_LSB_MV          = 0.0078125f;
 static const float    TEMP_COEFF_PER_C    = 0.003f;  // 0.3% / C
 static const uint8_t  CELL_WARN_PERCENT   = 80;
 
+// RFID
+static const uint16_t RFID_POLL_MS        = 250;
+static const uint32_t ARMED_TIMEOUT_MS    = 30000;
+static const uint8_t  NAME_MAX_LEN        = 14;     // bloc Mifare = 16B, on garde 14 + null
+
+// LED RGB
+static const uint8_t  LED_BRIGHTNESS      = 80;     // 0-255 (limite consommation)
+static const uint16_t LED_BLINK_MS        = 500;
+
 // EEPROM layout
 static const int EEPROM_CALIB_ADDR       = 0;    // float 4B
 static const int EEPROM_INITIAL_ADDR     = 4;    // float 4B
@@ -76,6 +93,8 @@ RTC_DS3231        rtc;
 SoftwareSerial    printer(PIN_PRINTER_RX, PIN_PRINTER_TX);
 OneWire           oneWire(PIN_TEMP);
 DallasTemperature tempSensor(&oneWire);
+Adafruit_PN532    pn532(PIN_PN532_IRQ, PIN_PN532_RESET);
+Adafruit_NeoPixel pixel(1, PIN_LED_RGB, NEO_GRB + NEO_KHZ800);
 
 // ============================================================================
 //  MACHINE A ETATS
@@ -94,7 +113,8 @@ enum TimeField : uint8_t {
 
 enum FeedbackKind : uint8_t {
   FB_NONE, FB_CALIB_OK, FB_CALIB_FAIL, FB_PRINTED,
-  FB_UNSTABLE, FB_NOT_CALIB, FB_CELL_WEAK
+  FB_UNSTABLE, FB_NOT_CALIB, FB_CELL_WEAK,
+  FB_BADGE_OK, FB_BADGE_TIMEOUT, FB_BADGE_AUTH_FAIL
 };
 
 static Mode         g_mode           = MODE_SPLASH;
@@ -130,6 +150,15 @@ static uint8_t  g_eMonth, g_eDay, g_eHour, g_eMin;
 
 // Historique (index de lecture dans MODE_HISTORY)
 static uint8_t  g_histViewIdx = 0;  // 0 = plus recent
+
+// RFID / Badge
+static bool     g_pn532Present   = false;
+static char     g_currentName[NAME_MAX_LEN + 1] = {0};
+static uint8_t  g_lastUid[7]     = {0};
+static uint8_t  g_lastUidLen     = 0;
+static uint32_t g_lastRfidPoll   = 0;
+static bool     g_armed          = false;
+static uint32_t g_armedEnd       = 0;
 
 // ============================================================================
 //  GESTION DES BOUTONS (anti-rebond + short/long press)
@@ -430,12 +459,23 @@ static void displayRead() {
     strcpy(l1, "O2: ---  NONCAL");
   }
 
-  const int mod  = g_calibValid ? computeMOD(g_currentO2, g_ppO2Target) : 0;
-  const int px10 = (int)(g_ppO2Target * 10.0f + 0.5f);
-  const DateTime now = rtc.now();
-  // Format compact 16 cols : "M: 34 p1.4 12:45" (sans suffixe m, context evident)
-  snprintf(l2, sizeof(l2), "M:%3d p%d.%d %02d:%02d",
-           mod, px10 / 10, px10 % 10, now.hour(), now.minute());
+  if (g_armed) {
+    // Mode arme : ligne 2 affiche le nom et le countdown au lieu du MOD
+    const uint32_t now32 = millis();
+    int rem = (int)((g_armedEnd - now32) / 1000);
+    if (rem < 0)  rem = 0;
+    if (rem > 99) rem = 99;
+    char nameTrunc[9];
+    strncpy(nameTrunc, g_currentName, 8);
+    nameTrunc[8] = 0;
+    snprintf(l2, sizeof(l2), "ARM:%-8s%2ds", nameTrunc, rem);
+  } else {
+    const int mod  = g_calibValid ? computeMOD(g_currentO2, g_ppO2Target) : 0;
+    const int px10 = (int)(g_ppO2Target * 10.0f + 0.5f);
+    const DateTime now = rtc.now();
+    snprintf(l2, sizeof(l2), "M:%3d p%d.%d %02d:%02d",
+             mod, px10 / 10, px10 % 10, now.hour(), now.minute());
+  }
 
   lcd.setCursor(0, 0); lcdPrintPadded(l1);
   lcd.setCursor(0, 1); lcdPrintPadded(l2);
@@ -537,6 +577,19 @@ static void displayFeedback() {
                cellLifePercent());
       l2 = l2buf;
       break;
+    case FB_BADGE_OK:
+      l1 = "Impression OK";
+      snprintf(l2buf, sizeof(l2buf), ">> %s", g_currentName);
+      l2 = l2buf;
+      break;
+    case FB_BADGE_TIMEOUT:
+      l1 = "Timeout badge";
+      l2 = "Pas stabilise";
+      break;
+    case FB_BADGE_AUTH_FAIL:
+      l1 = "Badge invalide";
+      l2 = "Cle ou format";
+      break;
     default: break;
   }
   lcd.setCursor(0, 0); lcdPrintPadded(l1);
@@ -546,7 +599,7 @@ static void displayFeedback() {
 // ============================================================================
 //  IMPRESSION TSPL (TSC TH240) + AJOUT HISTORIQUE
 // ============================================================================
-static void printLabel() {
+static void printLabel(const char *plongeurName) {
   const DateTime now = rtc.now();
   const int mod   = computeMOD(g_currentO2, g_ppO2Target);
   const int o2x10 = (int)(g_currentO2 * 10.0f + 0.5f);
@@ -561,24 +614,34 @@ static void printLabel() {
   printer.println(F("SPEED 4"));
   printer.println(F("CLS"));
 
-  printer.println(F("TEXT 20,15,\"4\",0,1,1,\"ANALYSE O2\""));
+  printer.println(F("TEXT 20,10,\"4\",0,1,1,\"ANALYSE O2\""));
+
+  // Ligne plongeur : nom du badge ou ____ a remplir au stylo
+  if (plongeurName != NULL && plongeurName[0] != 0) {
+    snprintf(line, sizeof(line),
+             "TEXT 20,55,\"3\",0,1,1,\"Plongeur: %s\"", plongeurName);
+  } else {
+    snprintf(line, sizeof(line),
+             "TEXT 20,55,\"3\",0,1,1,\"Plongeur: ____________\"");
+  }
+  printer.println(line);
 
   snprintf(line, sizeof(line),
-           "TEXT 20,65,\"5\",0,1,1,\"O2: %d.%d %%\"",
+           "TEXT 20,95,\"5\",0,1,1,\"O2: %d.%d %%\"",
            o2x10 / 10, o2x10 % 10);
   printer.println(line);
 
   snprintf(line, sizeof(line),
-           "TEXT 20,125,\"4\",0,1,1,\"MOD: %d m\"", mod);
+           "TEXT 20,150,\"4\",0,1,1,\"MOD: %d m\"", mod);
   printer.println(line);
 
   snprintf(line, sizeof(line),
-           "TEXT 20,170,\"3\",0,1,1,\"ppO2 ref: %d.%d\"",
+           "TEXT 20,190,\"3\",0,1,1,\"ppO2 ref: %d.%d\"",
            px10 / 10, px10 % 10);
   printer.println(line);
 
   snprintf(line, sizeof(line),
-           "TEXT 20,210,\"2\",0,1,1,\"%04d-%02d-%02d  %02d:%02d\"",
+           "TEXT 20,225,\"2\",0,1,1,\"%04d-%02d-%02d  %02d:%02d\"",
            now.year(), now.month(), now.day(),
            now.hour(), now.minute());
   printer.println(line);
@@ -599,6 +662,153 @@ static void printLabel() {
 }
 
 // ============================================================================
+//  LED RGB - mapping etat -> couleur
+// ============================================================================
+static void setLed(uint8_t r, uint8_t g, uint8_t b) {
+  pixel.setPixelColor(0, pixel.Color(r, g, b));
+  pixel.show();
+}
+
+static void updateLED() {
+  static uint32_t lastUpdate = 0;
+  const uint32_t now = millis();
+  if ((now - lastUpdate) < 100) return;  // refresh max 10 Hz
+  lastUpdate = now;
+
+  uint8_t r = 0, g = 0, b = 0;
+  bool blink = false;
+
+  switch (g_mode) {
+    case MODE_SPLASH:
+      r = 30; g = 30; b = 30;  // blanc tamise
+      break;
+    case MODE_READ:
+      if (!g_calibValid) {
+        r = 255; blink = true;          // rouge clignotant : non calibre
+      } else if (g_armed) {
+        b = 255; blink = true;          // bleu clignotant : badge arme
+      } else if (g_isStable) {
+        g = 255;                        // vert fixe : pret
+      } else {
+        r = 200; g = 80;                // orange : stabilisation
+      }
+      break;
+    case MODE_SET_TIME:
+      r = 200; g = 150;                 // jaune
+      break;
+    case MODE_HISTORY:
+      g = 150; b = 200;                 // cyan
+      break;
+    case MODE_FEEDBACK:
+      switch (g_feedback) {
+        case FB_PRINTED:
+        case FB_BADGE_OK:       r = 200; b = 200; break;  // violet
+        case FB_CALIB_OK:       g = 255;          break;  // vert
+        case FB_CALIB_FAIL:
+        case FB_NOT_CALIB:
+        case FB_CELL_WEAK:
+        case FB_BADGE_AUTH_FAIL:
+        case FB_BADGE_TIMEOUT:  r = 255;          break;  // rouge
+        case FB_UNSTABLE:       r = 200; g = 80;  break;  // orange
+        default:                                  break;
+      }
+      break;
+  }
+
+  if (blink && (now / LED_BLINK_MS) % 2 == 0) {
+    r = g = b = 0;
+  }
+
+  setLed(r, g, b);
+}
+
+// ============================================================================
+//  RFID PN532 - lecture badge Mifare Classic bloc 4
+// ============================================================================
+static bool readBadgeName(const uint8_t *uid, uint8_t uidLen, char *outName) {
+  if (uidLen != 4) return false;  // Mifare Classic 1K seul (UID 4B)
+
+  uint8_t key[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+  if (!pn532.mifareclassic_AuthenticateBlock(
+        (uint8_t *)uid, uidLen, 4, 0 /*KEY_A*/, key)) {
+    return false;
+  }
+
+  uint8_t data[16];
+  if (!pn532.mifareclassic_ReadDataBlock(4, data)) return false;
+
+  // Texte ASCII imprimable, null-termine, max NAME_MAX_LEN
+  uint8_t i = 0;
+  for (; i < NAME_MAX_LEN; i++) {
+    const uint8_t c = data[i];
+    if (c == 0 || c < 0x20 || c > 0x7E) break;
+    outName[i] = (char)c;
+  }
+  outName[i] = 0;
+  return outName[0] != 0;
+}
+
+// Forward declarations pour callbacks transitions
+static void enterFeedback(FeedbackKind kind);
+
+static void onBadgeRead(const char *name) {
+  // Decision : si stable + calibre, on imprime de suite
+  if (!g_calibValid) {
+    enterFeedback(FB_NOT_CALIB);
+    return;
+  }
+  strncpy(g_currentName, name, sizeof(g_currentName));
+  g_currentName[sizeof(g_currentName) - 1] = 0;
+
+  if (g_isStable) {
+    printLabel(g_currentName);
+    enterFeedback(FB_BADGE_OK);
+    g_armed = false;
+  } else {
+    // Mode arme : on attendra la stabilite, ou timeout 30s
+    g_armed    = true;
+    g_armedEnd = millis() + ARMED_TIMEOUT_MS;
+  }
+}
+
+static void pollRfid() {
+  if (!g_pn532Present) return;
+  const uint32_t now = millis();
+  if ((now - g_lastRfidPoll) < RFID_POLL_MS) return;
+  g_lastRfidPoll = now;
+
+  uint8_t uid[7];
+  uint8_t uidLen = 0;
+  const bool found = pn532.readPassiveTargetID(
+      PN532_MIFARE_ISO14443A, uid, &uidLen, 50 /*timeout ms*/);
+
+  if (!found) {
+    // Pas de carte : reset l'anti-doublon pour permettre un re-scan
+    g_lastUidLen = 0;
+    return;
+  }
+
+  // Meme carte qu'avant (toujours dans le champ) ?
+  if (uidLen == g_lastUidLen &&
+      memcmp(uid, g_lastUid, uidLen) == 0) {
+    // Si en mode arme, un re-scan reset le timer
+    if (g_armed) g_armedEnd = now + ARMED_TIMEOUT_MS;
+    return;
+  }
+
+  // Nouvelle carte
+  memcpy(g_lastUid, uid, uidLen);
+  g_lastUidLen = uidLen;
+
+  char name[NAME_MAX_LEN + 1] = {0};
+  if (readBadgeName(uid, uidLen, name)) {
+    onBadgeRead(name);
+  } else {
+    enterFeedback(FB_BADGE_AUTH_FAIL);
+  }
+}
+
+// ============================================================================
 //  TRANSITIONS D'ETAT
 // ============================================================================
 static void enterFeedback(FeedbackKind kind) {
@@ -610,7 +820,8 @@ static void enterFeedback(FeedbackKind kind) {
 
 static void enterRead() {
   resetStabilityBuffer();
-  g_mode = MODE_READ;
+  g_armed = false;
+  g_mode  = MODE_READ;
   lcd.clear();
 }
 
@@ -677,6 +888,20 @@ void setup() {
     g_tempReqPending = true;
   }
 
+  // LED RGB
+  pixel.begin();
+  pixel.setBrightness(LED_BRIGHTNESS);
+  pixel.clear();
+  pixel.show();
+
+  // PN532 RFID (optionnel, detection auto)
+  pn532.begin();
+  const uint32_t fw = pn532.getFirmwareVersion();
+  if (fw != 0) {
+    pn532.SAMConfig();
+    g_pn532Present = true;
+  }
+
   loadCalibration();
   resetStabilityBuffer();
 
@@ -691,6 +916,7 @@ void loop() {
   const uint32_t now = millis();
 
   updateTemperature();
+  updateLED();
 
   const ButtonEvent eL = updateButton(g_btnL);
   const ButtonEvent eC = updateButton(g_btnC);
@@ -701,6 +927,23 @@ void loop() {
   if (g_mode == MODE_READ && (now - lastSample) >= SAMPLE_INTERVAL_MS) {
     lastSample = now;
     sampleO2();
+  }
+
+  // Polling RFID en MODE_READ uniquement
+  if (g_mode == MODE_READ) {
+    pollRfid();
+
+    // Auto-impression si le mode arme atteint la stabilite avant timeout
+    if (g_armed) {
+      if (g_isStable && g_calibValid) {
+        printLabel(g_currentName);
+        g_armed = false;
+        enterFeedback(FB_BADGE_OK);
+      } else if ((int32_t)(now - g_armedEnd) >= 0) {
+        g_armed = false;
+        enterFeedback(FB_BADGE_TIMEOUT);
+      }
+    }
   }
 
   switch (g_mode) {
@@ -726,12 +969,16 @@ void loop() {
         if (g_ppO2Target > PPO2_MAX) g_ppO2Target = PPO2_MAX;
       }
       if (eC == BTN_SHORT) {
-        if (!g_calibValid) {
+        if (g_armed) {
+          // Annulation manuelle du mode arme
+          g_armed = false;
+          lcd.clear();
+        } else if (!g_calibValid) {
           enterFeedback(FB_NOT_CALIB);
         } else if (!g_isStable) {
           enterFeedback(FB_UNSTABLE);
         } else {
-          printLabel();
+          printLabel(NULL);  // pas de badge : ligne "Plongeur: ____"
           enterFeedback(FB_PRINTED);
         }
       }

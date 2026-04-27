@@ -13,6 +13,10 @@ Projet de remplacement d'un analyseur O2 commercial défaillant, entièrement DI
 - **Indicateur de stabilité** sur 15 lectures (seuil 0.1 %)
 - **Calibration à l'air** mémorisée en EEPROM (survit aux coupures)
 - **Horodatage RTC** sauvegardé même batterie débranchée
+- **Identification du plongeur par badge RFID** (Mifare Classic) — impression auto avec nom
+- **LED RGB** d'état visible de loin (couleurs par mode)
+- **Compensation thermique** via DS18B20 optionnel
+- **Historique EEPROM** des 10 dernières analyses
 - **Impression d'étiquette** TSPL sur imprimante thermique TSC TH240
 - **Interface 3 boutons tactiles** (appui court / appui long)
 - **Affichage LCD 16×2** rétroéclairé
@@ -32,6 +36,8 @@ Projet de remplacement d'un analyseur O2 commercial défaillant, entièrement DI
 | Imprimante TSC TH240 | Étiqueteuse thermique | communication série 9600 bauds |
 | Cellule O2 (ex: R-17 Med, R-22, OOM-202) | Capteur galvanique | sortie ~9-13 mV à l'air |
 | DS18B20 (TO-92) + pull-up 4.7 kΩ | Capteur de température | **optionnel**, pour compensation thermique 0.3 %/°C |
+| Module PN532 (I2C) + cartes Mifare Classic 1K | Lecteur RFID + badges | **optionnel**, identifie le plongeur sur l'étiquette |
+| WS2812B (1 LED RGB ou strip) | Indicateur d'état lumineux | sur D6, luminosité réglable |
 | Bloc secteur 9V DC 1A (jack 5.5/2.1 mm) | Alimentation Nano | depuis 220V AC |
 | Interrupteur secteur + porte-fusible | Sécurité 220V | fusible 1A temporisé |
 | Boîtier de paillasse (type coffret ABS) | Intégration fixe | avec passe-câbles |
@@ -52,6 +58,9 @@ Voir [WIRING.md](WIRING.md) pour le détail complet avec schémas ASCII.
 | Bouton CENTRE (TTP223) | D3 |
 | Bouton DROITE (TTP223) | D4 |
 | DS18B20 DQ (optionnel) | D5 (avec pull-up 4.7 kΩ vers 5V) |
+| LED RGB WS2812B (DIN) | D6 |
+| PN532 IRQ (optionnel) | D7 |
+| PN532 RESET (optionnel) | D8 |
 | Imprimante TSC RX | D11 (TX du Nano) |
 | Imprimante TSC TX | D10 (RX du Nano) |
 | Cellule O2 (+) | ADS1115 A0 |
@@ -79,8 +88,43 @@ Voir [INSTALLATION.md](INSTALLATION.md) — utilise **PlatformIO dans VSCode**.
 | Bouton | Appui court | Appui long (3 s) |
 |--------|-------------|-------------------|
 | **GAUCHE** | ppO2 − 0.1 (min 1.0) | Consulter l'historique |
-| **CENTRE** | Imprimer étiquette (si stable + calibré) | Entrer en réglage heure |
+| **CENTRE** | Imprimer étiquette **sans nom** (ligne `Plongeur: ____` à remplir) | Entrer en réglage heure |
 | **DROITE** | ppO2 + 0.1 (max 1.6) | Lancer la calibration |
+
+### Workflow avec badge RFID (optionnel)
+
+Si un module PN532 est branché, l'utilisateur peut **identifier le plongeur** en passant un badge Mifare Classic 1K sur le lecteur. Le nom est lu en bloc 4 (texte ASCII, 14 caractères max).
+
+```
+┌─ Cas A : analyse stable + badge passé
+│   → impression immédiate avec le nom
+│
+├─ Cas B : analyse instable + badge passé
+│   → mode "armé" pendant 30 secondes
+│   → LED bleue clignotante
+│   → LCD : "ARM:DUPONT  29s"
+│   → impression auto dès stabilité atteinte
+│   → si timeout 30s sans stabilité : annulation, feedback "Pas stabilise"
+│   → annulation manuelle : appui CENTRE
+│
+└─ Cas C : pas de badge
+    → appui CENTRE imprime sans nom
+```
+
+> **Anti-double impression** : tant que le badge reste posé sur le lecteur, aucune nouvelle impression n'est lancée. Il faut retirer le badge puis le repasser.
+
+### LED RGB d'état (WS2812B)
+
+| Couleur | Signification |
+|---------|---------------|
+| 🟢 Vert fixe | Stable + calibré, prêt à imprimer |
+| 🟠 Orange fixe | Stabilisation en cours |
+| 🔵 Bleu clignotant | Badge détecté, mode armé |
+| 🟣 Violet 1.5s | Impression en cours |
+| 🟡 Jaune fixe | Mode réglage de l'heure |
+| 🔵 Cyan fixe | Mode historique |
+| 🔴 Rouge clignotant | Erreur (non calibré, cellule usée, badge invalide) |
+| ⚪ Blanc tamisé | Splash de démarrage |
 
 ### Mode Historique
 
@@ -134,15 +178,29 @@ Exemple : fO2 = 32 %, ppO2 = 1.4 → MOD = (1.4 / 0.32 − 1) × 10 = **33.75 m*
 
 L'étiquette imprimée (50×30 mm) contient :
 
+**Avec badge RFID** :
 ```
 ┌────────────────────────┐
 │     ANALYSE O2         │
+│  Plongeur: DUPONT      │
 │                        │
 │     O2: 32.0 %         │
 │     MOD: 34 m          │
 │     ppO2 ref: 1.4      │
+│  2026-04-27  14:32     │
+└────────────────────────┘
+```
+
+**Sans badge** (la ligne reste vide pour remplir au stylo) :
+```
+┌────────────────────────┐
+│     ANALYSE O2         │
+│  Plongeur: ___________ │
 │                        │
-│  2026-04-24  14:32     │
+│     O2: 32.0 %         │
+│     MOD: 34 m          │
+│     ppO2 ref: 1.4      │
+│  2026-04-27  14:32     │
 └────────────────────────┘
 ```
 
