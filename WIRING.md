@@ -1,56 +1,58 @@
-# Guide de câblage - O2-SENTRY-FIX
+# Guide de câblage - O2-SENTRY-FIX (ESP32-WROOM-32)
 
-Schéma complet de connexion des modules à l'Arduino Nano.
+Schéma complet de connexion des modules à l'ESP32-WROOM-32.
 
 ---
 
 ## Vue d'ensemble des pins utilisées
 
-| Pin Nano | Direction | Usage |
-|----------|-----------|-------|
-| A4 (SDA) | I/O | Bus I2C (LCD + ADS1115 + RTC) |
-| A5 (SCL) | I/O | Bus I2C |
-| D2 | Input | Bouton GAUCHE (TTP223) |
-| D3 | Input | Bouton CENTRE (TTP223) |
-| D4 | Input | Bouton DROITE (TTP223) |
-| D5 | I/O | OneWire DS18B20 (capteur de température, **optionnel**) |
-| D6 | Output | LED RGB WS2812B (data) |
-| D7 | Input | PN532 IRQ (lecteur RFID, **optionnel**) |
-| D8 | Output | PN532 RESET (lecteur RFID, **optionnel**) |
-| D10 | Input | RX SoftwareSerial (vers TX imprimante) |
-| D11 | Output | TX SoftwareSerial (vers RX imprimante) |
-| 5V | Power | Alimentation modules logiques |
-| 3.3V | Power | (optionnel — TTP223 peut être en 3.3V) |
-| GND | Power | Masse commune |
-| VIN | Power | Entrée bloc secteur 9V DC |
+| Pin ESP32 | Direction | Usage |
+|-----------|-----------|-------|
+| G21 (SDA) | I/O | Bus I2C (LCD + ADS1115 + RTC + PN532) |
+| G22 (SCL) | I/O | Bus I2C |
+| G32 (T9)  | Input | Bouton GAUCHE (TTP223 **ou** touch natif) |
+| G33 (T8)  | Input | Bouton CENTRE (TTP223 **ou** touch natif) |
+| G27 (T7)  | Input | Bouton DROITE (TTP223 **ou** touch natif) |
+| G4        | I/O | OneWire DS18B20 (capteur de température, **optionnel**) |
+| G5        | Output | LED RGB WS2812B (data) — voir note niveau 3.3 V |
+| G18       | Input | PN532 IRQ (lecteur RFID, **optionnel**) |
+| G19       | Output | PN532 RESET (lecteur RFID, **optionnel**) |
+| G16       | Input | RX UART2 (vers TX imprimante TSC) |
+| G17       | Output | TX UART2 (vers RX imprimante TSC) |
+| 3V3       | Power | Alimentation modules 3.3 V |
+| 5V (VIN)  | Power | Alimentation modules 5 V (si USB/externe) |
+| GND       | Power | Masse commune |
+
+> **BUTTON_MODE** : G32/G33/G27 sont des broches touch-capables (T9/T8/T7) **et** des GPIO standard. Le câblage est identique pour les deux modes ; seul le `#define BUTTON_MODE` dans `platformio.ini` change.
 
 ---
 
-## Bus I2C (LCD + ADS1115 + RTC)
+## Bus I2C (LCD + ADS1115 + RTC + PN532)
 
-Les trois modules partagent le même bus I2C. Chaque module a une **adresse unique** et écoute son propre trafic.
+Les quatre modules partagent le même bus I2C sur **G21 (SDA) / G22 (SCL)**. Chaque module a une adresse unique, aucun conflit.
 
 ```
- Arduino Nano
- ┌──────────┐
- │       A4 ├─────┬──────────┬──────────┐
- │   (SDA)  │     │          │          │
- │       A5 ├─────┼────┬─────┼────┬─────┼────┐
- │   (SCL)  │     │    │     │    │     │    │
- │       5V ├─────┼────┼─────┼────┼─────┼────┼────┐
- │      GND ├─────┼────┼─────┼────┼─────┼────┼────┼────┐
- └──────────┘     │    │     │    │     │    │    │    │
-                 SDA  SCL   SDA  SCL   SDA  SCL  VCC  GND
-              ┌───┴────┴──┐┌─┴────┴──┐┌─┴────┴───────────┐
-              │ LCD 1602  ││ ADS1115 ││ RTC DS3231       │
-              │ I2C @0x27 ││ @0x48   ││ @0x68            │
-              └───────────┘└─────────┘└──────────────────┘
+ ESP32-WROOM-32
+ ┌──────────────┐
+ │  G21 (SDA)  ├───┬──────────┬──────────┬───────────┐
+ │  G22 (SCL)  ├───┼───┬──────┼───┬──────┼───┬───────┼───┐
+ │  3V3        ├───┼───┼──────┼───┼──────┼───┼───────┼───┼──┐
+ │  GND        ├───┼───┼──────┼───┼──────┼───┼───────┼───┼──┼──┐
+ └─────────────┘   │   │      │   │      │   │       │   │  │  │
+                  SDA SCL    SDA SCL    SDA SCL      SDA SCL │  │
+              ┌────┴───┴──┐┌─┴───┴──┐┌─┴───┴──────┐┌─┴───┴──┤  │
+              │ LCD 1602  ││ADS1115 ││ RTC DS3231 ││ PN532  │  │
+              │ I2C @0x27 ││ @0x48  ││   @0x68    ││ @0x24  │  │
+              └───────────┘└────────┘└────────────┘└────────┘  │
+                              VCC──────────────────────────────┘  │
+                              GND─────────────────────────────────┘
 ```
 
-**Notes importantes** :
-- Les modules I2C courants intègrent déjà leurs **résistances de pull-up** (4.7 kΩ ou 10 kΩ). Inutile d'en ajouter.
-- Si bus instable : vérifier qu'**un seul** module a ses pull-ups soudés, ou couper les jumpers sur les autres.
-- Adresse LCD : généralement **0x27**, parfois **0x3F** (dépend du PCF8574). Si rien n'affiche, changer `LCD_ADDR` dans [src/main.cpp](src/main.cpp).
+**Notes** :
+- Les modules I2C courants intègrent leurs **résistances de pull-up**. Inutile d'en ajouter.
+- Si bus instable : un seul module doit avoir ses pull-ups actifs.
+- Adresse LCD : généralement **0x27**, parfois **0x3F** (dépend du PCF8574). Modifier `LCD_ADDR` dans [src/main.cpp](src/main.cpp) si nécessaire.
+- Le PN532 doit être configuré en mode **I2C** via ses switches DIP (voir section dédiée).
 
 ---
 
@@ -62,48 +64,69 @@ La cellule galvanique produit une tension faible (9–13 mV à l'air). Le gain `
                       ADS1115
                     ┌─────────┐
      Cellule O2     │         │
-   ┌───────────┐    │   A0 ◄──┤───(+) cellule
+   ┌───────────┐    │   A0 ◄──┼─── (+) cellule
    │    (+) ●──┼────┤         │
-   │    (−) ●──┼────┤  GND ◄──┤───(−) cellule
+   │    (−) ●──┼────┤  GND ◄──┼─── (−) cellule
    └───────────┘    │         │
-                    │   VDD ──┼─── 5V Nano
-                    │   GND ──┼─── GND Nano
-                    │   SDA ──┼─── A4 Nano
-                    │   SCL ──┼─── A5 Nano
+                    │   VDD ──┼─── 3V3 ESP32
+                    │   GND ──┼─── GND ESP32
+                    │   SDA ──┼─── G21 ESP32
+                    │   SCL ──┼─── G22 ESP32
                     │  ADDR ──┼─── GND (→ adresse 0x48)
                     └─────────┘
 ```
 
-**Polarité cellule O2** : le fil **positif** (souvent rouge ou marqué +) va sur **A0**, le négatif sur **GND**. Inverser les fils donne une lecture négative → 0 %.
+> L'ADS1115 fonctionne en **3.3 V** — ne pas le connecter au 5V de l'ESP32.
 
-**Connecteur cellule** : la plupart des cellules utilisent un connecteur **Molex 43025** 2-broches ou un câble soudé. Vérifier avec la fiche du modèle choisi.
+**Polarité cellule O2** : fil **positif** (souvent rouge) sur **A0**, négatif sur **GND**. Polarité inversée → lecture 0 %.
 
 ---
 
-## Boutons TTP223
+## Boutons — deux modes de câblage
 
-⚠️ **Important** : la logique est **HIGH quand touché** (mode par défaut du module TTP223). Le code utilise `pinMode(pin, INPUT)` **sans pull-up interne** car le TTP223 pilote activement la sortie.
+### Mode 0 : TTP223 (BUTTON_MODE=0, `env:esp32-ttp223`)
+
+Les modules TTP223 pilotent la sortie à **HIGH quand touché** (configuration par défaut). Le code utilise `digitalRead(pin) == HIGH`.
 
 ```
                  TTP223 (×3)
                ┌──────────┐
-               │  VCC ────┼── 5V Nano
-               │  GND ────┼── GND Nano
-               │  I/O ────┼── D2 (GAUCHE) / D3 (CENTRE) / D4 (DROITE)
+               │  VCC ────┼── 3V3 ESP32  (ou 5V — modules tolèrent 2.5–5.5V)
+               │  GND ────┼── GND ESP32
+               │  I/O ────┼── G32 (GAUCHE) / G33 (CENTRE) / G27 (DROITE)
                └──────────┘
                 (pad capacitif au dos)
 ```
 
 **Jumpers au dos du TTP223** :
-- Par défaut : **sortie HIGH quand touché** (configuration attendue par le code)
-- Si tu inverses le jumper `A` : sortie LOW quand touché → **ne fonctionnera pas**, il faudrait inverser la logique du code.
-- Le jumper `B` passe en mode "toggle" (bascule) — **à laisser ouvert**, le code gère lui-même l'état.
+- Par défaut : sortie **HIGH quand touché** (attendu par le firmware)
+- Jumper `A` inversé → sortie LOW quand touché : **ne pas faire**
+- Jumper `B` → mode toggle : **laisser ouvert**, le firmware gère l'état
+
+### Mode 1 : Touch natif ESP32 (BUTTON_MODE=1, `env:esp32-touch`)
+
+Aucun module externe nécessaire. Connecter une **plaquette métallique** (pad, vis, ou feuille de cuivre) directement sur G32/G33/G27.
+
+```
+  G32 ──── pad métallique GAUCHE
+  G33 ──── pad métallique CENTRE
+  G27 ──── pad métallique DROITE
+```
+
+La sensibilité est réglée par `TOUCH_THRESHOLD` dans [src/main.cpp](src/main.cpp) (défaut : **40** — abaisser si trop sensible, monter si sous-sensible).
+
+> Utiliser du **fil blindé** si le câble entre l'ESP32 et le pad est long (>10 cm), pour éviter les faux déclenchements. La tresse du blindage va à GND, **pas** sur le fil signal.
+
+**Matériaux de pad utilisables** :
+- Scotch cuivre (adhésif conducteur, hobby électronique)
+- Rondelle/vis en acier inoxydable insérée dans le boîtier
+- PCB avec plan de cuivre
 
 ---
 
 ## Capteur de température DS18B20 (optionnel)
 
-Le firmware détecte automatiquement la présence du DS18B20 au démarrage. **Si absent, aucune compensation n'est appliquée** (comportement par défaut). Si présent, la mesure O2 est corrigée de la dérive thermique de la cellule galvanique (~0.3 %/°C).
+Le firmware détecte automatiquement le DS18B20 au démarrage. Si absent, aucune compensation n'est appliquée. Si présent, la mesure O2 est corrigée de ~0.3 %/°C.
 
 ```
           DS18B20 (TO-92, vu de face, plat vers soi)
@@ -117,31 +140,27 @@ Le firmware détecte automatiquement la présence du DS18B20 au démarrage. **Si
                   DQ
                   │
           4.7 kΩ  │      (pull-up OBLIGATOIRE)
-             ┌────┼────── 5V Nano
+             ┌────┼────── 3V3 ESP32
              │    │
-             └────┴────── D5 Nano
+             └────┴────── G4 ESP32
                   │
-                 GND ─── GND Nano
-                 VDD ─── 5V  Nano
+                 GND ─── GND ESP32
+                 VDD ─── 3V3 ESP32
 ```
 
 **Points importants** :
-- La résistance de **pull-up 4.7 kΩ** entre DQ et VCC est **obligatoire** (le bus OneWire utilise la collecteur ouvert).
-- Pour une mesure stable, placer le DS18B20 **au plus près de la cellule O2** (même enceinte/chambre).
-- En mode "parasite power" (2 fils), le câblage est différent — **non utilisé ici**, on câble les 3 fils.
-- La température de calibration est sauvegardée en EEPROM, donc la compensation est relative à l'environnement thermique du moment de la calibration.
-
-**Câblage avec plusieurs capteurs** : le bus OneWire supporte plusieurs DS18B20 en parallèle sur le même fil, mais le firmware ne lit que l'**index 0** (le premier détecté). Un seul capteur suffit.
+- Pull-up **4.7 kΩ** entre DQ et VCC : **obligatoire** (OneWire = collecteur ouvert)
+- Placer le DS18B20 **au plus près de la cellule O2** pour une compensation pertinente
+- Câblage **3 fils** (non parasite) : VDD séparé, pas le mode 2 fils
+- La température au moment de la calibration est sauvegardée en EEPROM
 
 ---
 
 ## Lecteur RFID PN532 (optionnel)
 
-Module compatible Adafruit PN532 ou clones (NXP). Il partage le bus I2C avec les autres modules — adresse 0x24, **aucun conflit** avec LCD (0x27), ADS1115 (0x48) et RTC (0x68).
+Partage le bus I2C — adresse 0x24, aucun conflit avec LCD (0x27), ADS1115 (0x48), RTC (0x68).
 
 ### Configuration du module
-
-Sur le PN532 type "Adafruit shield" ou "Elechouse v3", il y a deux **switches DIP** ou jumpers de mode :
 
 | Mode | SEL0 | SEL1 |
 |------|------|------|
@@ -149,27 +168,25 @@ Sur le PN532 type "Adafruit shield" ou "Elechouse v3", il y a deux **switches DI
 | HSU (UART)            | OFF | OFF |
 | SPI                   | ON  | OFF |
 
-→ Vérifier que les switches sont bien sur **I2C**.
+→ Vérifier que les switches DIP sont sur **I2C**.
 
 ### Câblage
 
 ```
        PN532
    ┌────────────┐
-   │ VCC ───────┼── 5V Nano (certains modules sont en 3.3V uniquement,
-   │            │   verifier la fiche - en general le module a un
-   │            │   regulateur 3.3V interne et accepte 5V)
-   │ GND ───────┼── GND Nano
-   │ SDA ───────┼── A4 Nano (partage avec autres modules I2C)
-   │ SCL ───────┼── A5 Nano
-   │ IRQ ───────┼── D7 Nano (signal "carte detectee")
-   │ RSTO/RSTPDN┼── D8 Nano (reset hardware)
+   │ VCC ───────┼── 3V3 ESP32  (la plupart des modules clones acceptent 3.3 V)
+   │ GND ───────┼── GND ESP32
+   │ SDA ───────┼── G21 ESP32  (partage I2C)
+   │ SCL ───────┼── G22 ESP32
+   │ IRQ ───────┼── G18 ESP32  (signal "carte détectée")
+   │ RSTO/RSTPDN┼── G19 ESP32  (reset hardware)
    └────────────┘
 ```
 
-### Format des badges
+> Si le module nécessite 5V (certaines versions avec régulateur absent), alimenter depuis le pin **5V/VIN** de l'ESP32.
 
-Le firmware lit le **nom du plongeur** sur des cartes **Mifare Classic 1K** (les plus courantes, ~0.20€/pièce).
+### Format des badges (Mifare Classic 1K)
 
 | Paramètre | Valeur |
 |-----------|--------|
@@ -178,44 +195,63 @@ Le firmware lit le **nom du plongeur** sur des cartes **Mifare Classic 1K** (les
 | Format | Texte ASCII brut, null-terminé |
 | Longueur max | 14 caractères |
 
-### Encodage d'un badge avec un téléphone Android
+### Encodage d'un badge (Android)
 
-1. Installer l'application **MIFARE Classic Tool** (gratuite, Google Play)
-2. Bouton "Write tag" → "Write block"
-3. Approcher la carte du téléphone
-4. Choisir : **secteur 1, bloc 0** (= bloc 4 absolu), **clé A par défaut**
-5. Saisir le nom en hex (ex. `DUPONT` = `44 55 50 4F 4E 54`)
-6. Compléter avec des `00` jusqu'à 16 octets
+1. Installer **MIFARE Classic Tool** (Google Play, gratuit)
+2. "Write tag" → "Write block"
+3. Approcher la carte
+4. Secteur 1, bloc 0 (= bloc 4 absolu), clé A par défaut
+5. Saisir le nom en ASCII (l'app propose une conversion automatique)
+6. Compléter avec `00` jusqu'à 16 octets
 
-> Astuce : l'app propose un mode "Write text" qui fait la conversion ASCII → hex automatiquement.
+### Workflow RFID
 
-### Workflow d'utilisation
-
-- **Sans badge** : appui CENTRE imprime l'étiquette avec une ligne `Plongeur: ____________` à remplir au stylo
-- **Avec badge** :
-  - Si l'analyse est stable : impression immédiate avec le nom
-  - Sinon : mode "armé" pendant 30s, impression auto dès que `[OK]`. Le LED clignote en bleu.
-  - Annulation manuelle : appui CENTRE pendant l'attente
-  - Re-passer le même badge réinitialise le timer 30s
+- **Sans badge** : appui CENTRE → étiquette avec `Plongeur: ____________` à remplir au stylo
+- **Badge + analyse stable** : impression immédiate avec le nom
+- **Badge + analyse instable** : mode armé 30 s, LED bleue clignotante, impression auto dès `[OK]`
+- **Annulation** : appui CENTRE pendant l'attente
+- **Anti-double** : retirer le badge puis le repasser pour une nouvelle impression
 
 ---
 
-## LED RGB de signalisation (WS2812B)
+## LED RGB WS2812B
 
-Une LED RGB adressable (NeoPixel) donne un état visible **de loin**, sans avoir à lire le LCD.
+### ⚠️ Problème de niveau logique
 
-### Câblage
+L'ESP32 fonctionne en **3.3 V** mais les WS2812B standard nécessitent un signal data entre **3.5 V et 5 V**. Avec 3.3 V, la LED peut fonctionner dans certains cas (chance), mais c'est hors spec et peu fiable.
+
+**Solution recommandée : level-shifter 74HCT245**
 
 ```
-   WS2812B (module 1 LED ou strip)
-   ┌──────────┐
-   │ VCC/5V ──┼── 5V Nano
-   │ GND ─────┼── GND Nano
-   │ DI/DIN ──┼── D6 Nano (data)
-   └──────────┘
+                        74HCT245
+  G5 ESP32 ──────► A1 │         │ B1 ──────► DIN WS2812B
+              DIR = L  │         │
+  3V3 ───────────  VCC │         │ VCC ─────── 5V
+  GND ───────────  GND │         │ GND ─────── GND
+                        └─────────┘
 ```
 
-> Une seule LED suffit. Si tu utilises un strip, le firmware ne pilote que la LED d'index 0.
+> Une seule sortie utilisée (A1→B1). Les 7 autres peuvent être laissées non-connectées ou à GND.
+
+**Alternative** : une diode Schottky (ex. 1N4148) en série sur la ligne 5V du WS2812B abaisse VCC à ~4.3 V, ce qui abaisse aussi le seuil de réception et rend la donnée 3.3 V plus fiable. Moins propre que le 74HCT245 mais fonctionnel en dépannage.
+
+### Câblage avec level-shifter
+
+```
+   G5 ESP32 ────► 74HCT245 ────► DIN WS2812B
+   5V        ─────────────────── VCC WS2812B
+   GND       ─────────────────── GND WS2812B
+```
+
+### Câblage direct (test/prototype, pas garanti)
+
+```
+   G5 ESP32 ────────────────────► DIN WS2812B
+   5V        ──────────────────── VCC WS2812B
+   GND       ──────────────────── GND WS2812B
+```
+
+> Une seule LED suffit. Si strip, seule la LED d'index 0 est pilotée.
 
 ### Codes couleur
 
@@ -225,42 +261,44 @@ Une LED RGB adressable (NeoPixel) donne un état visible **de loin**, sans avoir
 | 🟠 Orange | fixe | Mesure en cours de stabilisation |
 | 🟢 Vert | fixe | Stable + calibré, prêt à imprimer |
 | 🔵 Bleu | clignotant 1 Hz | Badge détecté, mode armé (attente stab.) |
-| 🟣 Violet | fixe (1.5s) | Impression en cours |
+| 🟣 Violet | fixe (1.5 s) | Impression en cours |
 | 🟡 Jaune | fixe | Mode réglage de l'heure |
 | 🔵 Cyan | fixe | Consultation de l'historique |
-| 🔴 Rouge | clignotant ou fixe | Erreur (non calibré, cellule usée, badge invalide) |
+| 🔴 Rouge | clignotant | Erreur (non calibré, cellule usée, badge invalide) |
 
-> La luminosité est limitée à `LED_BRIGHTNESS = 80/255` dans le firmware pour éviter d'éblouir et de tirer trop de courant. Modifiable dans `main.cpp`.
+> Luminosité : `LED_BRIGHTNESS = 80/255` dans [src/main.cpp](src/main.cpp). Ajustable.
 
 ---
 
-## Imprimante TSC TH240
+## Imprimante TSC TH240 — UART2 (HardwareSerial)
 
-Communication série 9600 bauds via SoftwareSerial.
+L'ESP32 utilise **Serial2 (UART2)** sur G16 (RX) / G17 (TX) — pas de SoftwareSerial.
 
-### Cas 1 : Imprimante en TTL 5V (rare)
-
-Connexion directe possible :
+### Cas 1 : Imprimante en TTL 3.3 V ou 5 V tolérant
 
 ```
-  Nano D11 (TX) ────► RX imprimante
-  Nano D10 (RX) ◄──── TX imprimante
-  GND Nano       ──── GND imprimante
+  G17 ESP32 (TX) ────► RX imprimante
+  G16 ESP32 (RX) ◄──── TX imprimante
+  GND ESP32       ──── GND imprimante
 ```
 
-### Cas 2 : Imprimante en RS-232 standard (±12V, le plus fréquent sur TH240)
+> Les niveaux logiques de l'ESP32 sont **3.3 V**. Si l'imprimante attend du TTL 5V, ajouter un level-shifter bidirectionnel (BSS138 ou similaire) sur les deux lignes.
 
-**Obligation d'utiliser un convertisseur de niveau MAX3232** sinon le Nano sera détruit par les tensions ±12V.
+### Cas 2 : Imprimante en RS-232 (±12V, cas fréquent sur TH240)
+
+**MAX3232 obligatoire** (version 3.3 V du MAX232) pour éviter de détruire l'ESP32.
 
 ```
-  Nano D11 (TX) ────► T1IN  │          │ T1OUT ────► Pin 2 DB9 (RX imprimante)
-  Nano D10 (RX) ◄──── R1OUT │ MAX3232  │ R1IN  ◄──── Pin 3 DB9 (TX imprimante)
-  5V Nano       ────  VCC   │          │
-  GND Nano      ────  GND   │          │ GND   ────  Pin 5 DB9 (masse)
+  G17 ESP32 (TX) ──► T1IN  │          │ T1OUT ──► Pin 2 DB9 (RX imprimante)
+  G16 ESP32 (RX) ◄── R1OUT │ MAX3232  │ R1IN  ◄── Pin 3 DB9 (TX imprimante)
+  3V3 ESP32      ──  VCC   │          │
+  GND ESP32      ──  GND   │          │ GND   ──  Pin 5 DB9 (masse)
                             └──────────┘
 ```
 
-**Alimentation imprimante** : la TH240 a son **propre bloc secteur 24V**. Ne jamais tenter de l'alimenter depuis le Nano — courant de tirage jusqu'à 2 A en impression.
+> Utiliser **MAX3232** (3.3 V) et **non** MAX232 (5 V) — l'alimentation est différente.
+
+**Alimentation imprimante** : la TH240 a son **propre bloc 24V**. Ne jamais tenter de l'alimenter depuis l'ESP32.
 
 ---
 
@@ -274,34 +312,27 @@ Appareil fixe de paillasse alimenté sur le **secteur 220V AC**.
   Prise 220V AC
        │
    ┌───┴────┐
-   │ Fusible│  1 A temporisé
-   │ 1A (T) │
+   │ Fusible│  1 A temporisé (T)
    └───┬────┘
        │
    ┌───┴────────┐
-   │Interrupteur│  bipolaire, coupe phase + neutre
-   │  bipolaire │
+   │Interrupteur│  bipolaire — coupe phase + neutre
    └───┬────────┘
        │
-       ├─────────────────────► Bloc secteur 9V DC 1A ──► jack Nano (VIN)
-       │                                                 (5V interne Nano)
+       ├── Bloc secteur 5V DC 2A ──► USB ou pin 5V ESP32
+       │   (ou 9V → jack VIN avec régulateur interne)
        │
-       └─────────────────────► Imprimante TSC TH240 (bloc 24V d'origine)
+       └── Imprimante TSC TH240 (bloc 24V d'origine, non modifié)
 ```
 
-**Points clés** :
-- **Un seul interrupteur bipolaire** coupe tout (Nano + imprimante)
-- **Fusible 1 A temporisé (T)** en entrée, toujours sur la **phase**
-- **Bloc secteur 9V DC 1A** type "adaptateur mural" standard, jack 5.5/2.1 mm → branché sur le jack DC du Nano
-- L'**imprimante garde son bloc 24V d'origine** (non modifié)
-- **Masses séparées** : le GND du Nano et le GND de l'imprimante se rejoignent uniquement via le fil TTL de données (cf. section imprimante)
+> **ESP32 vs Nano** : l'ESP32 accepte 3.3–3.6 V sur pin 3V3, ou 5V sur pin 5V (via régulateur LDO interne), ou 5–12V sur pin VIN (si régulateur embarqué sur la carte de dev). Vérifier la fiche de ta carte de dev. Un bloc 5V/2A USB type C est le plus simple.
 
-### Câblage 220V (côté secteur)
+### Câblage 220V
 
 ```
-  Phase (marron) ──► Fusible ──► Interrupteur ──┬── Bloc 9V DC
+  Phase (marron) ──► Fusible ──► Interrupteur ──┬── Bloc 5V DC
                                                  │
-  Neutre (bleu) ───────────────► Interrupteur ──┼── Bloc 9V DC
+  Neutre (bleu) ───────────────► Interrupteur ──┼── Bloc 5V DC
                                                  │
                                                  └── Imprimante (via prise)
   Terre (vert/jaune) ──► boîtier métallique (si applicable)
@@ -309,65 +340,44 @@ Appareil fixe de paillasse alimenté sur le **secteur 220V AC**.
 
 ### Sécurité 220V — ⚠️ OBLIGATOIRE
 
-- **Toutes les connexions 220V sous gaine thermo ou dans un domino fermé**, aucun contact exposé
-- **Distance minimale** de 4 mm entre pistes/connexions 220V et basse tension (règle "creepage")
-- **Boîtier plastique ABS ignifuge** (préféré) ou **boîtier métallique relié à la terre**
-- **Décharge de traction** sur le câble secteur (passe-câble à vis ou serre-câble)
-- Vérifier que le **bloc secteur 9V** est marqué **CE** et double isolation (symbole ⊡)
-
-### Consommation
-
-| État | Consommation côté 220V |
-|------|-------------------------|
-| Veille (Nano + LCD + ADS) | ~2 W |
-| Impression d'étiquette (pic ~2 s) | jusqu'à 30 W |
-
-Un transformateur 9V/1A (9 VA) + imprimante 24V/2A (48 VA) = **~60 VA max**, largement couvert par un fusible 1 A temporisé.
-
-### Option alternative : module AC-DC intégré (HLK-PM01)
-
-Pour un montage plus compact (pas de bloc secteur externe), on peut intégrer un module **HLK-PM01** (220V AC → 5V DC, 600 mA) directement dans le boîtier, branché sur le pin **5V** du Nano (en bypassant le régulateur).
-
-```
-  220V AC ──► HLK-PM01 ──► 5V DC ──► pin 5V du Nano (pas VIN)
-                           GND DC ──► GND du Nano
-```
-
-**⚠️ À ne faire que si tu maîtrises les règles d'isolation 220V en PCB.** Sinon, reste sur le bloc secteur externe : c'est plus sûr et déjà certifié CE.
+- Toutes connexions 220V **sous gaine thermo ou domino fermé**, aucun contact exposé
+- **Distance ≥ 4 mm** entre pistes 220V et basse tension (règle "creepage")
+- **Boîtier ABS ignifuge** ou boîtier métallique relié à la terre
+- **Décharge de traction** sur le câble secteur
+- Bloc secteur marqué **CE** et double isolation (symbole ⊡)
 
 ---
 
 ## Plan de masse
 
-**Tous les GND doivent être reliés en étoile** sur un seul point commun (généralement le GND du Nano ou une barrette de bus). Éviter les masses en série qui créent des boucles et des décalages de tension sur la cellule O2.
+Tous les GND reliés en **étoile** sur un point commun (barrette bus ou pin GND ESP32). Éviter les masses en série : les boucles créent des décalages de tension mesurables sur la cellule O2.
 
 ---
 
 ## Checklist avant premier allumage
 
-- [ ] Polarité cellule O2 respectée (+ sur A0, − sur GND de l'ADS)
-- [ ] Jumpers ADDR de l'ADS1115 → **GND** (adresse 0x48)
-- [ ] Jumper A du TTP223 → position **par défaut** (HIGH actif)
+- [ ] Polarité cellule O2 : (+) sur A0, (−) sur GND de l'ADS1115
+- [ ] Jumper ADDR ADS1115 → **GND** (adresse 0x48)
+- [ ] DIP switches PN532 → **I2C** (SEL0 OFF, SEL1 ON)
+- [ ] Pile CR2032 dans le RTC (maintien de l'heure hors tension)
 - [ ] Tous les GND reliés entre eux
-- [ ] Pile CR2032 insérée dans le RTC (sinon perte de l'heure à chaque coupure)
 - [ ] Bloc secteur imprimante branché séparément
-- [ ] Adresse LCD (0x27 ou 0x3F) vérifiée avec un scanner I2C
-- [ ] (Si DS18B20) Résistance pull-up 4.7 kΩ entre D5 et 5V bien présente
-- [ ] (Si PN532) DIP switches en mode **I2C** (SEL0 OFF, SEL1 ON)
-- [ ] (Si PN532) Clé A par défaut `FF FF FF FF FF FF` non modifiée sur la carte
-- [ ] LED WS2812B en sens correct : DIN côté Nano, DOUT vers la suivante (si plusieurs)
+- [ ] Adresse LCD vérifiée (0x27 ou 0x3F) avec scanner I2C
+- [ ] (Si DS18B20) pull-up **4.7 kΩ** entre DQ et 3V3 bien présent
+- [ ] (Si WS2812B) level-shifter 74HCT245 câblé OU câblage direct accepté en prototype
+- [ ] (Si BUTTON_MODE=1) pads touch bien isolés mécaniquement (pas de contact avec boîtier GND)
+- [ ] TTP223 : jumper A sur **HIGH actif** (par défaut), jumper B ouvert
+- [ ] `env:esp32-ttp223` ou `env:esp32-touch` sélectionné dans PlatformIO selon le montage
 
 ---
 
 ## Scanner I2C (debug)
 
-En cas de problème d'affichage, téléverser ce sketch jetable pour scanner les adresses :
-
 ```cpp
 #include <Wire.h>
 void setup() {
-  Wire.begin();
-  Serial.begin(9600);
+  Wire.begin(21, 22);  // SDA=G21, SCL=G22
+  Serial.begin(115200);
   for (byte a = 1; a < 127; a++) {
     Wire.beginTransmission(a);
     if (Wire.endTransmission() == 0) {
@@ -379,4 +389,4 @@ void setup() {
 void loop() {}
 ```
 
-Résultat attendu : `0x27` (LCD), `0x48` (ADS), `0x68` (RTC).
+Résultat attendu : `0x24` (PN532, si présent), `0x27` (LCD), `0x48` (ADS1115), `0x68` (RTC).

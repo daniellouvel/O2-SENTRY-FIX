@@ -1,8 +1,17 @@
 # O2-SENTRY-FIX
 
-**Analyseur fixe d'oxygène pour plongée** (station de paillasse, alimentation secteur 220V AC) — basé sur Arduino Nano, avec impression d'étiquette d'analyse de mélange Nitrox/Trimix.
+**Analyseur fixe d'oxygène pour plongée** (station de paillasse, alimentation secteur 220V AC) — avec impression d'étiquette d'analyse de mélange Nitrox/Trimix.
 
 Projet de remplacement d'un analyseur O2 commercial défaillant, entièrement DIY et documenté.
+
+## Branches
+
+| Branche | Microcontrôleur | État |
+|---------|-----------------|------|
+| `main` | Arduino Nano (ATmega328P) | version de référence |
+| `esp32-port` | **ESP32-WROOM-32** | version active — plus de flash, touch natif |
+
+> **Branche recommandée : `esp32-port`**. Le Nano est à la limite de la mémoire flash avec toutes les bibliothèques (PN532 + NeoPixel + RTC + ADS + LCD ≈ 28/30 KB). L'ESP32 n'a pas cette contrainte (4 MB flash).
 
 ---
 
@@ -26,19 +35,21 @@ Projet de remplacement d'un analyseur O2 commercial défaillant, entièrement DI
 
 ## Matériel requis (BOM)
 
+> BOM pour la branche **`esp32-port`** (ESP32-WROOM-32). Voir branche `main` pour la version Arduino Nano.
+
 | Composant | Rôle | Notes |
 |-----------|------|-------|
-| Arduino Nano (ATmega328P) | MCU principal | clone ou original |
-| ADS1115 (I2C, 0x48) | ADC 16 bits | gain ×16 pour sensibilité max |
+| ESP32-WROOM-32 (carte de dev 38 pins) | MCU principal | 4 MB flash, WiFi/BT non utilisés |
+| ADS1115 (I2C, 0x48) | ADC 16 bits | gain ×16, alimentation 3.3 V |
 | LCD 1602 I2C (0x27) | Affichage | avec module PCF8574 |
 | RTC DS3231 (ou DS1307) | Horloge temps réel | DS3231 recommandé (plus précis) |
-| 3× TTP223 | Boutons tactiles capacitifs | mode par défaut (HIGH actif) |
-| Imprimante TSC TH240 | Étiqueteuse thermique | communication série 9600 bauds |
+| 3× TTP223 **ou** 3 pads métalliques | Boutons tactiles | TTP223 = `BUTTON_MODE=0` · pads nus = `BUTTON_MODE=1` (touch ESP32) |
+| Imprimante TSC TH240 | Étiqueteuse thermique | UART2 9600 bauds + MAX3232 si RS-232 |
 | Cellule O2 (ex: R-17 Med, R-22, OOM-202) | Capteur galvanique | sortie ~9-13 mV à l'air |
-| DS18B20 (TO-92) + pull-up 4.7 kΩ | Capteur de température | **optionnel**, pour compensation thermique 0.3 %/°C |
-| Module PN532 (I2C) + cartes Mifare Classic 1K | Lecteur RFID + badges | **optionnel**, identifie le plongeur sur l'étiquette |
-| WS2812B (1 LED RGB ou strip) | Indicateur d'état lumineux | sur D6, luminosité réglable |
-| Bloc secteur 9V DC 1A (jack 5.5/2.1 mm) | Alimentation Nano | depuis 220V AC |
+| DS18B20 (TO-92) + pull-up 4.7 kΩ | Capteur de température | **optionnel**, compensation thermique 0.3 %/°C |
+| Module PN532 (I2C) + cartes Mifare Classic 1K | Lecteur RFID + badges | **optionnel**, nom du plongeur sur l'étiquette |
+| WS2812B (1 LED RGB) + 74HCT245 | Indicateur d'état | level-shifter 3.3 V → 5 V recommandé |
+| Bloc secteur 5V DC 2A | Alimentation ESP32 | depuis 220V AC |
 | Interrupteur secteur + porte-fusible | Sécurité 220V | fusible 1A temporisé |
 | Boîtier de paillasse (type coffret ABS) | Intégration fixe | avec passe-câbles |
 | Câblage | — | fils 22 AWG, domino ou bornier |
@@ -47,22 +58,22 @@ Projet de remplacement d'un analyseur O2 commercial défaillant, entièrement DI
 
 ## Schéma de câblage
 
-Voir [WIRING.md](WIRING.md) pour le détail complet avec schémas ASCII.
+Voir [WIRING.md](WIRING.md) pour le détail complet (schémas ASCII, notes niveau logique, touch natif).
 
-**Résumé rapide** :
+**Résumé rapide (branche `esp32-port`)** :
 
-| Module | Pin Arduino Nano |
-|--------|------------------|
-| I2C (LCD / ADS1115 / RTC) | SDA=A4, SCL=A5 |
-| Bouton GAUCHE (TTP223) | D2 |
-| Bouton CENTRE (TTP223) | D3 |
-| Bouton DROITE (TTP223) | D4 |
-| DS18B20 DQ (optionnel) | D5 (avec pull-up 4.7 kΩ vers 5V) |
-| LED RGB WS2812B (DIN) | D6 |
-| PN532 IRQ (optionnel) | D7 |
-| PN532 RESET (optionnel) | D8 |
-| Imprimante TSC RX | D11 (TX du Nano) |
-| Imprimante TSC TX | D10 (RX du Nano) |
+| Module | Pin ESP32-WROOM-32 |
+|--------|---------------------|
+| I2C (LCD / ADS1115 / RTC / PN532) | SDA=G21, SCL=G22 |
+| Bouton GAUCHE (TTP223 ou touch) | G32 (T9) |
+| Bouton CENTRE (TTP223 ou touch) | G33 (T8) |
+| Bouton DROITE (TTP223 ou touch) | G27 (T7) |
+| DS18B20 DQ (optionnel) | G4 (pull-up 4.7 kΩ vers 3V3) |
+| LED RGB WS2812B (DIN) | G5 (via 74HCT245 recommandé) |
+| PN532 IRQ (optionnel) | G18 |
+| PN532 RESET (optionnel) | G19 |
+| Imprimante TSC — UART2 TX | G17 |
+| Imprimante TSC — UART2 RX | G16 |
 | Cellule O2 (+) | ADS1115 A0 |
 | Cellule O2 (−) | ADS1115 GND |
 
@@ -71,6 +82,16 @@ Voir [WIRING.md](WIRING.md) pour le détail complet avec schémas ASCII.
 ## Installation logicielle
 
 Voir [INSTALLATION.md](INSTALLATION.md) — utilise **PlatformIO dans VSCode**.
+
+Choisir l'environnement selon le type de boutons :
+
+```
+# Boutons TTP223 (digitalRead)
+pio run -e esp32-ttp223 -t upload
+
+# Touch natif ESP32 (pad conducteur)
+pio run -e esp32-touch -t upload
+```
 
 ---
 
@@ -229,7 +250,10 @@ Gérées automatiquement par PlatformIO via [platformio.ini](platformio.ini) :
 - [Adafruit ADS1X15](https://github.com/adafruit/Adafruit_ADS1X15)
 - [RTClib](https://github.com/adafruit/RTClib)
 - [LiquidCrystal_I2C](https://github.com/marcoschwartz/LiquidCrystal_I2C)
-- `Wire`, `SoftwareSerial`, `EEPROM` (intégrées à Arduino)
+- [OneWire](https://github.com/PaulStoffregen/OneWire) + [DallasTemperature](https://github.com/milesburton/Arduino-Temperature-Control-Library)
+- [Adafruit PN532](https://github.com/adafruit/Adafruit-PN532)
+- [Adafruit NeoPixel](https://github.com/adafruit/Adafruit_NeoPixel)
+- `Wire`, `HardwareSerial`, `EEPROM` (intégrées à l'ESP32 Arduino framework)
 
 ---
 

@@ -1,15 +1,19 @@
 /*
- * Analyseur O2 fixe (de paillasse, alimentation 220V AC) - Arduino Nano
+ * Analyseur O2 fixe (de paillasse, alimentation 220V AC) - ESP32-WROOM-32
  *
- * Capteur O2     : ADS1115 A0 (gain x16)
- * Affichage      : LCD 1602 I2C @0x27
- * Horloge        : DS3231 I2C @0x68
- * Boutons        : TTP223 sur D2 (GAUCHE) / D3 (CENTRE) / D4 (DROITE)
- * Temperature    : DS18B20 sur D5 (OPTIONNEL - compensation si detecte)
- * LED RGB        : WS2812B (NeoPixel) sur D6 - feedback visuel
- * Lecteur RFID   : PN532 I2C @0x24, IRQ D7, RESET D8
+ * Capteur O2     : ADS1115 A0 (gain x16)         I2C @0x48
+ * Affichage      : LCD 1602 I2C                  @0x27
+ * Horloge        : DS3231                        I2C @0x68
+ * Boutons        : 3 entrees, type configurable a la compilation :
+ *                    BUTTON_MODE = 0  -> modules TTP223 (digital, HIGH actif)
+ *                    BUTTON_MODE = 1  -> touch capacitif natif ESP32
+ *                  Pins identiques dans les deux cas (G32/G33/G27).
+ * Temperature    : DS18B20 sur G4 (OPTIONNEL)
+ * LED RGB        : WS2812B (NeoPixel) sur G5
+ *                  ATTENTION : data 3.3V vers LED 5V, voir WIRING.md
+ * Lecteur RFID   : PN532 I2C @0x24, IRQ G18, RESET G19 (OPTIONNEL)
  *                  Lit le nom du plongeur en bloc 4 (Mifare Classic)
- * Imprimante     : TSC TH240 via SoftwareSerial D10 (RX) / D11 (TX)
+ * Imprimante     : TSC TH240 via UART2 (Serial2) - RX G16, TX G17
  *
  * Architecture : machine a etats, aucun delay(), tout sur millis().
  */
@@ -19,7 +23,6 @@
 #include <LiquidCrystal_I2C.h>
 #include <Adafruit_ADS1X15.h>
 #include <RTClib.h>
-#include <SoftwareSerial.h>
 #include <EEPROM.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
@@ -27,17 +30,36 @@
 #include <Adafruit_NeoPixel.h>
 
 // ============================================================================
-//  CONFIGURATION MATERIELLE
+//  CONFIGURATION : choix du type de bouton (compile-time)
 // ============================================================================
-static const uint8_t PIN_BTN_LEFT     = 2;
-static const uint8_t PIN_BTN_CENTER   = 3;
-static const uint8_t PIN_BTN_RIGHT    = 4;
-static const uint8_t PIN_TEMP         = 5;   // DS18B20 OneWire (optionnel)
-static const uint8_t PIN_LED_RGB      = 6;   // WS2812B data
-static const uint8_t PIN_PN532_IRQ    = 7;
-static const uint8_t PIN_PN532_RESET  = 8;
-static const uint8_t PIN_PRINTER_RX   = 10;
-static const uint8_t PIN_PRINTER_TX   = 11;
+//   BUTTON_MODE = 0 : modules TTP223 (HIGH = touche)
+//   BUTTON_MODE = 1 : touch capacitif natif ESP32 (touchRead < seuil = touche)
+//
+// Defini dans platformio.ini via -DBUTTON_MODE=N selon l'environnement choisi.
+// Defaut : TTP223 si non specifie.
+#ifndef BUTTON_MODE
+  #define BUTTON_MODE 0
+#endif
+
+// ============================================================================
+//  CONFIGURATION MATERIELLE (pins ESP32)
+// ============================================================================
+//
+// Choix des pins boutons : T9/T8/T7 sont des broches "touch" capables, ET
+// utilisables en GPIO standard. Donc identiques pour les deux modes.
+//   T9 = GPIO 32 (LEFT)
+//   T8 = GPIO 33 (CENTER)
+//   T7 = GPIO 27 (RIGHT)
+//
+static const uint8_t PIN_BTN_LEFT     = 32;
+static const uint8_t PIN_BTN_CENTER   = 33;
+static const uint8_t PIN_BTN_RIGHT    = 27;
+static const uint8_t PIN_TEMP         = 4;    // DS18B20 OneWire (optionnel)
+static const uint8_t PIN_LED_RGB      = 5;    // WS2812B data
+static const uint8_t PIN_PN532_IRQ    = 18;
+static const uint8_t PIN_PN532_RESET  = 19;
+static const uint8_t PIN_PRINTER_RX   = 16;   // RX UART2 (vers TX imprimante)
+static const uint8_t PIN_PRINTER_TX   = 17;   // TX UART2 (vers RX imprimante)
 static const uint8_t LCD_ADDR         = 0x27;
 static const uint8_t ADS_O2_CHANNEL   = 0;
 
@@ -60,26 +82,32 @@ static const float    PPO2_MAX            = 1.6f;
 static const float    PPO2_STEP           = 0.1f;
 static const float    CALIB_REF_PERCENT   = 20.9f;
 static const float    ADS_LSB_MV          = 0.0078125f;
-static const float    TEMP_COEFF_PER_C    = 0.003f;  // 0.3% / C
+static const float    TEMP_COEFF_PER_C    = 0.003f;
 static const uint8_t  CELL_WARN_PERCENT   = 80;
+
+// Touch capacitif (uniquement si BUTTON_MODE == 1)
+//   touchRead() retourne ~80 au repos, descend vers ~25 quand touche
+//   Ajuster en fonction de la taille du plot et de l'environnement.
+static const uint16_t TOUCH_THRESHOLD     = 40;
 
 // RFID
 static const uint16_t RFID_POLL_MS        = 250;
 static const uint32_t ARMED_TIMEOUT_MS    = 30000;
-static const uint8_t  NAME_MAX_LEN        = 14;     // bloc Mifare = 16B, on garde 14 + null
+static const uint8_t  NAME_MAX_LEN        = 14;
 
 // LED RGB
-static const uint8_t  LED_BRIGHTNESS      = 80;     // 0-255 (limite consommation)
+static const uint8_t  LED_BRIGHTNESS      = 80;
 static const uint16_t LED_BLINK_MS        = 500;
 
 // EEPROM layout
-static const int EEPROM_CALIB_ADDR       = 0;    // float 4B
-static const int EEPROM_INITIAL_ADDR     = 4;    // float 4B
-static const int EEPROM_CALIB_TEMP_ADDR  = 8;    // float 4B
-static const int EEPROM_MAGIC_ADDR       = 12;   // uint8_t
-static const int EEPROM_HIST_COUNT_ADDR  = 13;   // uint8_t
-static const int EEPROM_HIST_IDX_ADDR    = 14;   // uint8_t
-static const int EEPROM_HIST_BASE        = 16;   // 10 x 11B
+static const int EEPROM_SIZE             = 256;
+static const int EEPROM_CALIB_ADDR       = 0;
+static const int EEPROM_INITIAL_ADDR     = 4;
+static const int EEPROM_CALIB_TEMP_ADDR  = 8;
+static const int EEPROM_MAGIC_ADDR       = 12;
+static const int EEPROM_HIST_COUNT_ADDR  = 13;
+static const int EEPROM_HIST_IDX_ADDR    = 14;
+static const int EEPROM_HIST_BASE        = 16;
 static const uint8_t EEPROM_MAGIC        = 0xA5;
 static const uint8_t HIST_MAX            = 10;
 static const uint8_t HIST_RECORD_SIZE    = 11;
@@ -90,7 +118,7 @@ static const uint8_t HIST_RECORD_SIZE    = 11;
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 Adafruit_ADS1115  ads;
 RTC_DS3231        rtc;
-SoftwareSerial    printer(PIN_PRINTER_RX, PIN_PRINTER_TX);
+HardwareSerial    printer(2);  // UART2
 OneWire           oneWire(PIN_TEMP);
 DallasTemperature tempSensor(&oneWire);
 Adafruit_PN532    pn532(PIN_PN532_IRQ, PIN_PN532_RESET);
@@ -122,20 +150,20 @@ static TimeField    g_field          = FIELD_HOUR;
 static FeedbackKind g_feedback       = FB_NONE;
 static uint32_t     g_feedbackEnd    = 0;
 static uint32_t     g_splashEnd      = 0;
-static bool         g_pendingSetTime = false;  // force SET_TIME apres splash
+static bool         g_pendingSetTime = false;
 
 // ============================================================================
 //  ETAT CAPTEUR / UTILISATEUR
 // ============================================================================
 static float    g_o2Buffer[STABILITY_SAMPLES];
-static uint8_t  g_bufIdx      = 0;
-static uint8_t  g_bufFilled   = 0;
-static float    g_currentO2   = 0.0f;
-static bool     g_isStable    = false;
-static float    g_calibMv         = 10.0f;   // mV a 20.9% (calibration courante)
-static float    g_initialCalibMv  = 10.0f;   // mV premiere calibration (vie cellule)
-static float    g_calibTempC      = 20.0f;   // C a la calibration
-static bool     g_calibValid      = false;   // EEPROM magic trouve ?
+static uint8_t  g_bufIdx          = 0;
+static uint8_t  g_bufFilled       = 0;
+static float    g_currentO2       = 0.0f;
+static bool     g_isStable        = false;
+static float    g_calibMv         = 10.0f;
+static float    g_initialCalibMv  = 10.0f;
+static float    g_calibTempC      = 20.0f;
+static bool     g_calibValid      = false;
 static float    g_ppO2Target      = 1.4f;
 
 // Temperature
@@ -144,12 +172,12 @@ static float    g_currentTempC    = 20.0f;
 static uint32_t g_lastTempReq     = 0;
 static bool     g_tempReqPending  = false;
 
-// Buffer d'edition horodatage
+// Edition horodatage
 static uint16_t g_eYear;
 static uint8_t  g_eMonth, g_eDay, g_eHour, g_eMin;
 
-// Historique (index de lecture dans MODE_HISTORY)
-static uint8_t  g_histViewIdx = 0;  // 0 = plus recent
+// Historique
+static uint8_t  g_histViewIdx = 0;
 
 // RFID / Badge
 static bool     g_pn532Present   = false;
@@ -178,10 +206,22 @@ static Button g_btnL = {PIN_BTN_LEFT,   false, false, 0, 0, false};
 static Button g_btnC = {PIN_BTN_CENTER, false, false, 0, 0, false};
 static Button g_btnR = {PIN_BTN_RIGHT,  false, false, 0, 0, false};
 
+// Lecture brute du bouton selon le mode choisi.
+// Retourne true si le bouton est "actif" (touche).
+static inline bool readButtonRaw(uint8_t pin) {
+#if BUTTON_MODE == 1
+  // Touch capacitif natif : la valeur descend quand on touche
+  return touchRead(pin) < TOUCH_THRESHOLD;
+#else
+  // TTP223 : sortie HIGH quand on touche
+  return digitalRead(pin) == HIGH;
+#endif
+}
+
 static ButtonEvent updateButton(Button &b) {
   ButtonEvent ev = BTN_NONE;
   const uint32_t now = millis();
-  const bool raw = (digitalRead(b.pin) == HIGH);
+  const bool raw = readButtonRaw(b.pin);
 
   if (raw != b.rawState) {
     b.rawState = raw;
@@ -211,6 +251,13 @@ static ButtonEvent updateButton(Button &b) {
 // ============================================================================
 //  EEPROM : CALIBRATION + HISTORIQUE
 // ============================================================================
+//   Note ESP32 : EEPROM est emule sur flash via NVS. Necessite EEPROM.begin()
+//   au demarrage et EEPROM.commit() apres chaque ecriture.
+//
+static void eepromCommit() {
+  EEPROM.commit();
+}
+
 static void loadCalibration() {
   uint8_t magic = 0;
   EEPROM.get(EEPROM_MAGIC_ADDR, magic);
@@ -248,6 +295,7 @@ static void saveCalibration(float mv, float tempC) {
 
   const uint8_t magic = EEPROM_MAGIC;
   EEPROM.put(EEPROM_MAGIC_ADDR, magic);
+  eepromCommit();
   g_calibValid = true;
 }
 
@@ -260,7 +308,7 @@ static uint8_t cellLifePercent() {
 }
 
 struct HistRecord {
-  uint8_t  yearOffset;  // annee - 2024
+  uint8_t  yearOffset;
   uint8_t  month;
   uint8_t  day;
   uint8_t  hour;
@@ -294,13 +342,13 @@ static void histAdd(const HistRecord &r) {
   EEPROM.put(EEPROM_HIST_IDX_ADDR, nextIdx);
   uint8_t c = histCount();
   if (c < HIST_MAX) { c++; EEPROM.put(EEPROM_HIST_COUNT_ADDR, c); }
+  eepromCommit();
 }
 
 static bool histRead(uint8_t viewIdx, HistRecord &out) {
   const uint8_t c = histCount();
   if (viewIdx >= c) return false;
   const uint8_t writeIdx = histWriteIdx();
-  // recent = writeIdx - 1 - viewIdx (modulo HIST_MAX)
   const int slot = ((int)writeIdx - 1 - (int)viewIdx + HIST_MAX * 2) % HIST_MAX;
   const int addr = EEPROM_HIST_BASE + slot * HIST_RECORD_SIZE;
   EEPROM.get(addr, out);
@@ -325,7 +373,6 @@ static void sampleO2() {
            ? (voltage / g_calibMv) * CALIB_REF_PERCENT
            : 0.0f;
 
-  // Compensation temperature (uniquement si DS18B20 present et calibration valide)
   if (g_tempPresent && g_calibValid) {
     const float dT = g_currentTempC - g_calibTempC;
     const float factor = 1.0f + TEMP_COEFF_PER_C * dT;
@@ -460,7 +507,6 @@ static void displayRead() {
   }
 
   if (g_armed) {
-    // Mode arme : ligne 2 affiche le nom et le countdown au lieu du MOD
     const uint32_t now32 = millis();
     int rem = (int)((g_armedEnd - now32) / 1000);
     if (rem < 0)  rem = 0;
@@ -494,7 +540,6 @@ static void displaySetTime() {
   }
   snprintf(l1, sizeof(l1), "Reglage %s", label);
 
-  // Ligne 2 : "HH:MM DD/MM/YY" = 14 chars + crochets (+2) = 16 EXACTEMENT
   const uint16_t yy = g_eYear % 100;
   switch (g_field) {
     case FIELD_HOUR:
@@ -544,11 +589,9 @@ static void displayHistory() {
     return;
   }
 
-  // "#10/10 fO2:99.9%" = 16 max
   snprintf(l1, sizeof(l1), "#%d/%d fO2:%d.%d%%",
            g_histViewIdx + 1, c,
            r.fO2_x10 / 10, r.fO2_x10 % 10);
-  // "24/04 12:45 M:34" = 16 max (MOD borne a 999 dans computeMOD)
   snprintf(l2, sizeof(l2), "%02d/%02d %02d:%02d M%d",
            r.day, r.month, r.hour, r.minute, r.mod);
 
@@ -616,7 +659,6 @@ static void printLabel(const char *plongeurName) {
 
   printer.println(F("TEXT 20,10,\"4\",0,1,1,\"ANALYSE O2\""));
 
-  // Ligne plongeur : nom du badge ou ____ a remplir au stylo
   if (plongeurName != NULL && plongeurName[0] != 0) {
     snprintf(line, sizeof(line),
              "TEXT 20,55,\"3\",0,1,1,\"Plongeur: %s\"", plongeurName);
@@ -648,7 +690,6 @@ static void printLabel(const char *plongeurName) {
 
   printer.println(F("PRINT 1,1"));
 
-  // Ajout a l'historique
   HistRecord r;
   r.yearOffset = (now.year() >= 2024) ? (uint8_t)(now.year() - 2024) : 0;
   r.month      = now.month();
@@ -662,7 +703,7 @@ static void printLabel(const char *plongeurName) {
 }
 
 // ============================================================================
-//  LED RGB - mapping etat -> couleur
+//  LED RGB
 // ============================================================================
 static void setLed(uint8_t r, uint8_t g, uint8_t b) {
   pixel.setPixelColor(0, pixel.Color(r, g, b));
@@ -672,7 +713,7 @@ static void setLed(uint8_t r, uint8_t g, uint8_t b) {
 static void updateLED() {
   static uint32_t lastUpdate = 0;
   const uint32_t now = millis();
-  if ((now - lastUpdate) < 100) return;  // refresh max 10 Hz
+  if ((now - lastUpdate) < 100) return;
   lastUpdate = now;
 
   uint8_t r = 0, g = 0, b = 0;
@@ -680,36 +721,36 @@ static void updateLED() {
 
   switch (g_mode) {
     case MODE_SPLASH:
-      r = 30; g = 30; b = 30;  // blanc tamise
+      r = 30; g = 30; b = 30;
       break;
     case MODE_READ:
       if (!g_calibValid) {
-        r = 255; blink = true;          // rouge clignotant : non calibre
+        r = 255; blink = true;
       } else if (g_armed) {
-        b = 255; blink = true;          // bleu clignotant : badge arme
+        b = 255; blink = true;
       } else if (g_isStable) {
-        g = 255;                        // vert fixe : pret
+        g = 255;
       } else {
-        r = 200; g = 80;                // orange : stabilisation
+        r = 200; g = 80;
       }
       break;
     case MODE_SET_TIME:
-      r = 200; g = 150;                 // jaune
+      r = 200; g = 150;
       break;
     case MODE_HISTORY:
-      g = 150; b = 200;                 // cyan
+      g = 150; b = 200;
       break;
     case MODE_FEEDBACK:
       switch (g_feedback) {
         case FB_PRINTED:
-        case FB_BADGE_OK:       r = 200; b = 200; break;  // violet
-        case FB_CALIB_OK:       g = 255;          break;  // vert
+        case FB_BADGE_OK:       r = 200; b = 200; break;
+        case FB_CALIB_OK:       g = 255;          break;
         case FB_CALIB_FAIL:
         case FB_NOT_CALIB:
         case FB_CELL_WEAK:
         case FB_BADGE_AUTH_FAIL:
-        case FB_BADGE_TIMEOUT:  r = 255;          break;  // rouge
-        case FB_UNSTABLE:       r = 200; g = 80;  break;  // orange
+        case FB_BADGE_TIMEOUT:  r = 255;          break;
+        case FB_UNSTABLE:       r = 200; g = 80;  break;
         default:                                  break;
       }
       break;
@@ -723,21 +764,20 @@ static void updateLED() {
 }
 
 // ============================================================================
-//  RFID PN532 - lecture badge Mifare Classic bloc 4
+//  RFID PN532
 // ============================================================================
 static bool readBadgeName(const uint8_t *uid, uint8_t uidLen, char *outName) {
-  if (uidLen != 4) return false;  // Mifare Classic 1K seul (UID 4B)
+  if (uidLen != 4) return false;
 
   uint8_t key[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
   if (!pn532.mifareclassic_AuthenticateBlock(
-        (uint8_t *)uid, uidLen, 4, 0 /*KEY_A*/, key)) {
+        (uint8_t *)uid, uidLen, 4, 0, key)) {
     return false;
   }
 
   uint8_t data[16];
   if (!pn532.mifareclassic_ReadDataBlock(4, data)) return false;
 
-  // Texte ASCII imprimable, null-termine, max NAME_MAX_LEN
   uint8_t i = 0;
   for (; i < NAME_MAX_LEN; i++) {
     const uint8_t c = data[i];
@@ -748,11 +788,9 @@ static bool readBadgeName(const uint8_t *uid, uint8_t uidLen, char *outName) {
   return outName[0] != 0;
 }
 
-// Forward declarations pour callbacks transitions
 static void enterFeedback(FeedbackKind kind);
 
 static void onBadgeRead(const char *name) {
-  // Decision : si stable + calibre, on imprime de suite
   if (!g_calibValid) {
     enterFeedback(FB_NOT_CALIB);
     return;
@@ -765,7 +803,6 @@ static void onBadgeRead(const char *name) {
     enterFeedback(FB_BADGE_OK);
     g_armed = false;
   } else {
-    // Mode arme : on attendra la stabilite, ou timeout 30s
     g_armed    = true;
     g_armedEnd = millis() + ARMED_TIMEOUT_MS;
   }
@@ -780,23 +817,19 @@ static void pollRfid() {
   uint8_t uid[7];
   uint8_t uidLen = 0;
   const bool found = pn532.readPassiveTargetID(
-      PN532_MIFARE_ISO14443A, uid, &uidLen, 50 /*timeout ms*/);
+      PN532_MIFARE_ISO14443A, uid, &uidLen, 50);
 
   if (!found) {
-    // Pas de carte : reset l'anti-doublon pour permettre un re-scan
     g_lastUidLen = 0;
     return;
   }
 
-  // Meme carte qu'avant (toujours dans le champ) ?
   if (uidLen == g_lastUidLen &&
       memcmp(uid, g_lastUid, uidLen) == 0) {
-    // Si en mode arme, un re-scan reset le timer
     if (g_armed) g_armedEnd = now + ARMED_TIMEOUT_MS;
     return;
   }
 
-  // Nouvelle carte
   memcpy(g_lastUid, uid, uidLen);
   g_lastUidLen = uidLen;
 
@@ -858,10 +891,14 @@ static void performCalibration() {
 //  SETUP / LOOP
 // ============================================================================
 void setup() {
+  // Boutons : pinMode necessaire seulement en mode TTP223
+#if BUTTON_MODE == 0
   pinMode(PIN_BTN_LEFT,   INPUT);
   pinMode(PIN_BTN_CENTER, INPUT);
   pinMode(PIN_BTN_RIGHT,  INPUT);
+#endif
 
+  // I2C : sur ESP32 par defaut SDA=21, SCL=22
   Wire.begin();
 
   lcd.init();
@@ -877,7 +914,8 @@ void setup() {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
-  printer.begin(9600);
+  // UART2 sur ESP32 (Serial2) - 9600 bauds vers l'imprimante TSC
+  printer.begin(9600, SERIAL_8N1, PIN_PRINTER_RX, PIN_PRINTER_TX);
 
   tempSensor.begin();
   tempSensor.setWaitForConversion(false);
@@ -888,13 +926,11 @@ void setup() {
     g_tempReqPending = true;
   }
 
-  // LED RGB
   pixel.begin();
   pixel.setBrightness(LED_BRIGHTNESS);
   pixel.clear();
   pixel.show();
 
-  // PN532 RFID (optionnel, detection auto)
   pn532.begin();
   const uint32_t fw = pn532.getFirmwareVersion();
   if (fw != 0) {
@@ -902,13 +938,14 @@ void setup() {
     g_pn532Present = true;
   }
 
+  // EEPROM emule sur ESP32 - allocation explicite
+  EEPROM.begin(EEPROM_SIZE);
   loadCalibration();
   resetStabilityBuffer();
 
-  // Splash plus long si non calibre, pour que l'utilisateur lise "NON CALIBRE"
   g_mode           = MODE_SPLASH;
   g_splashEnd      = millis() + (g_calibValid ? SPLASH_MS : SPLASH_NOCAL_MS);
-  g_pendingSetTime = rtcLost;  // si RTC a perdu l'alim : forcer SET_TIME
+  g_pendingSetTime = rtcLost;
   displaySplash();
 }
 
@@ -922,18 +959,15 @@ void loop() {
   const ButtonEvent eC = updateButton(g_btnC);
   const ButtonEvent eR = updateButton(g_btnR);
 
-  // Echantillonnage O2 en MODE_READ uniquement
   static uint32_t lastSample = 0;
   if (g_mode == MODE_READ && (now - lastSample) >= SAMPLE_INTERVAL_MS) {
     lastSample = now;
     sampleO2();
   }
 
-  // Polling RFID en MODE_READ uniquement
   if (g_mode == MODE_READ) {
     pollRfid();
 
-    // Auto-impression si le mode arme atteint la stabilite avant timeout
     if (g_armed) {
       if (g_isStable && g_calibValid) {
         printLabel(g_currentName);
@@ -970,7 +1004,6 @@ void loop() {
       }
       if (eC == BTN_SHORT) {
         if (g_armed) {
-          // Annulation manuelle du mode arme
           g_armed = false;
           lcd.clear();
         } else if (!g_calibValid) {
@@ -978,19 +1011,13 @@ void loop() {
         } else if (!g_isStable) {
           enterFeedback(FB_UNSTABLE);
         } else {
-          printLabel(NULL);  // pas de badge : ligne "Plongeur: ____"
+          printLabel(NULL);
           enterFeedback(FB_PRINTED);
         }
       }
-      if (eL == BTN_LONG) {
-        enterHistory();
-      }
-      if (eC == BTN_LONG) {
-        enterSetTime();
-      }
-      if (eR == BTN_LONG) {
-        performCalibration();
-      }
+      if (eL == BTN_LONG) enterHistory();
+      if (eC == BTN_LONG) enterSetTime();
+      if (eR == BTN_LONG) performCalibration();
       break;
 
     case MODE_SET_TIME:
@@ -1004,9 +1031,7 @@ void loop() {
           enterRead();
         }
       }
-      if (eL == BTN_LONG) {  // annuler sans sauver
-        enterRead();
-      }
+      if (eL == BTN_LONG) enterRead();
       break;
 
     case MODE_HISTORY: {
@@ -1017,9 +1042,7 @@ void loop() {
       if (eR == BTN_SHORT && c > 0) {
         if (g_histViewIdx > 0) g_histViewIdx--;
       }
-      if (eC == BTN_SHORT) {
-        enterRead();
-      }
+      if (eC == BTN_SHORT) enterRead();
       break;
     }
 
@@ -1031,7 +1054,6 @@ void loop() {
       break;
   }
 
-  // Rafraichissement LCD
   static uint32_t lastDisplay = 0;
   if ((now - lastDisplay) >= DISPLAY_INTERVAL_MS) {
     lastDisplay = now;
