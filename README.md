@@ -9,15 +9,17 @@ Projet de remplacement d'un analyseur O2 commercial défaillant, entièrement DI
 | Branche | Microcontrôleur | État |
 |---------|-----------------|------|
 | `main` | Arduino Nano (ATmega328P) | version de référence |
-| `esp32-port` | **ESP32-WROOM-32** | version active — plus de flash, touch natif |
+| `esp32-port` | **ESP32-WROOM-32** | version stable — boutons physiques uniquement |
+| `esp32-webserver` | **ESP32-WROOM-32** | **version active** — + serveur web WiFi |
 
-> **Branche recommandée : `esp32-port`**. Le Nano est à la limite de la mémoire flash avec toutes les bibliothèques (PN532 + NeoPixel + RTC + ADS + LCD ≈ 28/30 KB). L'ESP32 n'a pas cette contrainte (4 MB flash).
+> **Branche recommandée : `esp32-webserver`**. Ajoute un point d'accès WiFi intégré (`O2-Sentry` / `plongee24`) avec interface web sur `192.168.4.1` pour surveiller la mesure et verrouiller la ppO2 à distance.
 
 ---
 
 ## Fonctionnalités
 
-- **Mesure O2** via cellule galvanique + ADS1115 (résolution 7.8 µV)
+- **Interface web WiFi** (point d'accès intégré) — mesure en direct, réglage et **verrouillage ppO2** depuis un smartphone
+- **Mesure O2** via cellule galvanique + ADS1115 différentiel A0−A1 (résolution 7.8 µV, rejet bruit secteur)
 - **MOD** (Maximum Operating Depth) calculée en temps réel, choix direct entre ppO2 **1.4** (standard) et **1.6** (max)
 - **Indicateur de stabilité** sur 15 lectures (seuil 0.1 %)
 - **Calibration à l'air** mémorisée en EEPROM (survit aux coupures)
@@ -111,6 +113,30 @@ pio run -e esp32-touch -t upload
 | **GAUCHE** | ppO2 = **1.4** (valeur standard) | Consulter l'historique |
 | **CENTRE** | Imprimer étiquette **sans nom** (ligne `Plongeur: ____` à remplir) | Entrer en réglage heure |
 | **DROITE** | ppO2 = **1.6** (valeur maximale) | Lancer la calibration |
+
+### Interface web WiFi (branche `esp32-webserver`)
+
+L'ESP32 crée son propre réseau WiFi dès le démarrage — aucun routeur nécessaire.
+
+| Paramètre | Valeur |
+|-----------|--------|
+| SSID | `O2-Sentry` |
+| Mot de passe | `plongee24` |
+| Adresse | `http://192.168.4.1` |
+
+**Fonctionnalités de l'interface** :
+- Mesure O2 en direct (rafraîchissement 2 s)
+- Indicateur de stabilité, MOD, température, état de calibration
+- Choix ppO2 (1.4 / 1.6) depuis le navigateur
+- **Verrouillage ppO2** : les boutons GAUCHE et DROITE sont désactivés tant que le verrou est actif — utile pour fixer la ppO2 de référence avant de remettre l'appareil à un plongeur
+
+Indicateur sur le LCD quand verrouillé :
+```
+┌────────────────┐
+│O2:32.0% [OK]   │
+│M: 34 p1.4L12:45│  ← 'L' remplace l'espace entre ppO2 et heure
+└────────────────┘
+```
 
 ### Workflow avec badge RFID (optionnel)
 

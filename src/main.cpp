@@ -1,9 +1,9 @@
 /*
  * Analyseur O2 fixe (de paillasse, alimentation 220V AC) - ESP32-WROOM-32
  *
- * Capteur O2     : ADS1115 A0 (gain x16)         I2C @0x48
- * Affichage      : LCD 1602 I2C                  @0x27
- * Horloge        : DS3231                        I2C @0x68
+ * Capteur O2     : ADS1115 differentiel A0-A1 (gain x16)  I2C @0x48
+ * Affichage      : LCD 1602 I2C                            @0x27
+ * Horloge        : DS3231                                  I2C @0x68
  * Boutons        : 3 entrees, type configurable a la compilation :
  *                    BUTTON_MODE = 0  -> modules TTP223 (digital, HIGH actif)
  *                    BUTTON_MODE = 1  -> touch capacitif natif ESP32
@@ -14,6 +14,8 @@
  * Lecteur RFID   : PN532 I2C @0x24, IRQ G18, RESET G19 (OPTIONNEL)
  *                  Lit le nom du plongeur en bloc 4 (Mifare Classic)
  * Imprimante     : TSC TH240 via UART2 (Serial2) - RX G16, TX G17
+ * WiFi AP        : SSID "O2-Sentry" - interface web sur 192.168.4.1
+ *                  Reglage et verrouillage ppO2 a distance
  *
  * Architecture : machine a etats, aucun delay(), tout sur millis().
  */
@@ -28,6 +30,8 @@
 #include <DallasTemperature.h>
 #include <Adafruit_PN532.h>
 #include <Adafruit_NeoPixel.h>
+#include <WiFi.h>
+#include <WebServer.h>
 
 // ============================================================================
 //  CONFIGURATION : choix du type de bouton (compile-time)
@@ -63,6 +67,118 @@ static const uint8_t PIN_PRINTER_TX   = 17;   // TX UART2 (vers RX imprimante)
 static const uint8_t LCD_ADDR         = 0x27;
 // Cellule O2 câblée en différentiel : (+) → A0, (−) → A1
 // Rejette le bruit secteur (CMRR ~90 dB) — important sur alim 220V
+
+// ============================================================================
+//  WIFI AP
+// ============================================================================
+static const char*  WIFI_SSID = "O2-Sentry";
+static const char*  WIFI_PASS = "plongee24";  // min 8 car. ou "" pour réseau ouvert
+static WebServer    server(80);
+
+// Page HTML embarquée en flash (raw string literal)
+static const char HTML_PAGE[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>O2 Sentry</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:monospace;background:#1a1a2e;color:#eee;padding:12px;max-width:420px;margin:auto}
+h1{text-align:center;padding:12px;color:#4fc3f7;font-size:1.3em}
+.card{background:#16213e;border:1px solid #0f3460;border-radius:10px;padding:16px;margin:10px 0}
+.card h2{font-size:.85em;color:#4fc3f7;margin-bottom:12px;text-transform:uppercase;letter-spacing:.05em}
+.big{font-size:2.8em;font-weight:bold;text-align:center;padding:10px 0}
+.row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #0f3460}
+.row:last-child{border-bottom:none}
+.lbl{color:#888}.val{font-weight:bold}
+.ok{color:#66bb6a}.warn{color:#ffa726}
+.sb{display:inline-block;padding:3px 12px;border-radius:12px;font-size:.8em}
+.sb-ok{background:#1b5e20;color:#a5d6a7}
+.sb-warn{background:#bf360c;color:#ffe0b2}
+.opts{display:flex;gap:8px;margin:10px 0}
+label.opt{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
+  cursor:pointer;background:#0f3460;padding:12px;border-radius:8px;font-size:1em}
+label.opt input{accent-color:#4fc3f7;width:16px;height:16px}
+.lckrow{display:flex;align-items:center;gap:10px;margin:10px 0;
+  padding:12px;background:#0f3460;border-radius:8px}
+.lckrow input{width:22px;height:22px;accent-color:#ef5350;cursor:pointer;flex-shrink:0}
+.lckrow small{color:#aaa;font-size:.8em}
+button{width:100%;padding:13px;background:#0f3460;color:#4fc3f7;
+  border:1px solid #4fc3f7;border-radius:8px;font-size:1em;
+  font-family:monospace;cursor:pointer;margin-top:6px}
+button:active{background:#1565c0}
+.msg{text-align:center;margin-top:8px;min-height:20px;color:#66bb6a;font-size:.9em}
+.foot{font-size:.7em;color:#444;text-align:center;margin-top:18px}
+</style>
+</head>
+<body>
+<h1>&#9889; O2 Sentry</h1>
+
+<div class="card">
+<h2>Mesure en direct</h2>
+<div class="big" id="o2v">-- %</div>
+<div style="text-align:center;margin-bottom:12px">
+  <span class="sb sb-warn" id="stab">Stabilisation...</span>
+</div>
+<div class="row"><span class="lbl">MOD</span><span class="val" id="mod">--</span></div>
+<div class="row"><span class="lbl">ppO2 ref</span><span class="val" id="ppo2c">--</span></div>
+<div class="row"><span class="lbl">Temperature</span><span class="val" id="temp">--</span></div>
+<div class="row"><span class="lbl">Calibration</span><span class="val" id="cal">--</span></div>
+</div>
+
+<div class="card">
+<h2>Reglage ppO2</h2>
+<div class="opts">
+  <label class="opt"><input type="radio" name="pp" value="1.4" id="r14"> ppO2 = 1.4</label>
+  <label class="opt"><input type="radio" name="pp" value="1.6" id="r16"> ppO2 = 1.6</label>
+</div>
+<div class="lckrow">
+  <input type="checkbox" id="lck">
+  <div><strong>Verrouiller</strong><br>
+  <small>Desactive les boutons physiques GAUCHE / DROITE</small></div>
+</div>
+<button onclick="apply()">Appliquer</button>
+<div class="msg" id="msg"></div>
+</div>
+
+<div class="foot">O2-Sentry &bull; WiFi AP &bull; 192.168.4.1</div>
+
+<script>
+function upd(){
+  fetch('/data').then(r=>r.json()).then(d=>{
+    document.getElementById('o2v').textContent=d.o2.toFixed(1)+' %';
+    var s=document.getElementById('stab');
+    if(d.stable){s.textContent='OK Stable';s.className='sb sb-ok';}
+    else{s.textContent='Stabilisation...';s.className='sb sb-warn';}
+    document.getElementById('mod').textContent=d.mod+' m';
+    document.getElementById('ppo2c').textContent=d.ppo2.toFixed(1)+(d.locked?' [VERR]':'');
+    document.getElementById('temp').textContent=d.temp>-50?d.temp.toFixed(1)+' degC':'N/A';
+    document.getElementById('cal').textContent=d.cal?'OK':'Non calibre';
+    document.getElementById(d.ppo2>=1.55?'r16':'r14').checked=true;
+    document.getElementById('lck').checked=d.locked;
+  }).catch(function(){});
+}
+function apply(){
+  var v=document.querySelector('input[name=pp]:checked');
+  if(!v)return;
+  var b='ppo2='+v.value+'&lock='+(document.getElementById('lck').checked?'1':'0');
+  fetch('/ppo2',{method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b})
+    .then(r=>r.text()).then(function(){
+      var m=document.getElementById('msg');
+      m.textContent='Applique OK';
+      setTimeout(function(){m.textContent='';},2500);
+      upd();
+    });
+}
+upd();
+setInterval(upd,2000);
+</script>
+</body>
+</html>
+)rawliteral";
 
 // ============================================================================
 //  CONSTANTES LOGICIEL
@@ -165,6 +281,7 @@ static float    g_initialCalibMv  = 10.0f;
 static float    g_calibTempC      = 20.0f;
 static bool     g_calibValid      = false;
 static float    g_ppO2Target      = 1.4f;
+static bool     g_ppO2Locked      = false;  // verrouillage via interface web
 
 // Temperature
 static bool     g_tempPresent     = false;
@@ -519,8 +636,11 @@ static void displayRead() {
     const int mod  = g_calibValid ? computeMOD(g_currentO2, g_ppO2Target) : 0;
     const int px10 = (int)(g_ppO2Target * 10.0f + 0.5f);
     const DateTime now = rtc.now();
-    snprintf(l2, sizeof(l2), "M:%3d p%d.%d %02d:%02d",
-             mod, px10 / 10, px10 % 10, now.hour(), now.minute());
+    // 'L' si ppO2 verrouillé, ' ' sinon — reste 16 caractères
+    snprintf(l2, sizeof(l2), "M:%3d p%d.%d%c%02d:%02d",
+             mod, px10 / 10, px10 % 10,
+             g_ppO2Locked ? 'L' : ' ',
+             now.hour(), now.minute());
   }
 
   lcd.setCursor(0, 0); lcdPrintPadded(l1);
@@ -888,6 +1008,42 @@ static void performCalibration() {
 }
 
 // ============================================================================
+//  SERVEUR WEB — handlers
+// ============================================================================
+static void webHandleRoot() {
+  server.send_P(200, "text/html", HTML_PAGE);
+}
+
+static void webHandleData() {
+  const int mod = g_calibValid ? computeMOD(g_currentO2, g_ppO2Target) : 0;
+  char json[192];
+  snprintf(json, sizeof(json),
+    "{\"o2\":%.1f,\"stable\":%s,\"mod\":%d,\"ppo2\":%.1f,"
+    "\"locked\":%s,\"temp\":%.1f,\"cal\":%s}",
+    g_currentO2,
+    g_isStable  ? "true" : "false",
+    mod,
+    g_ppO2Target,
+    g_ppO2Locked ? "true" : "false",
+    g_currentTempC,
+    g_calibValid ? "true" : "false"
+  );
+  server.send(200, "application/json", json);
+}
+
+static void webHandleSetPpO2() {
+  if (server.hasArg("ppo2")) {
+    const float v = server.arg("ppo2").toFloat();
+    if (v >= 1.35f && v <= 1.45f)  g_ppO2Target = PPO2_STD;
+    else if (v >= 1.55f)            g_ppO2Target = PPO2_MAX;
+  }
+  if (server.hasArg("lock")) {
+    g_ppO2Locked = (server.arg("lock") == "1");
+  }
+  server.send(200, "text/plain", "OK");
+}
+
+// ============================================================================
 //  SETUP / LOOP
 // ============================================================================
 void setup() {
@@ -947,11 +1103,19 @@ void setup() {
   g_splashEnd      = millis() + (g_calibValid ? SPLASH_MS : SPLASH_NOCAL_MS);
   g_pendingSetTime = rtcLost;
   displaySplash();
+
+  // WiFi Access Point + serveur web
+  WiFi.softAP(WIFI_SSID, WIFI_PASS);
+  server.on("/",      HTTP_GET,  webHandleRoot);
+  server.on("/data",  HTTP_GET,  webHandleData);
+  server.on("/ppo2",  HTTP_POST, webHandleSetPpO2);
+  server.begin();
 }
 
 void loop() {
   const uint32_t now = millis();
 
+  server.handleClient();
   updateTemperature();
   updateLED();
 
@@ -994,8 +1158,10 @@ void loop() {
       break;
 
     case MODE_READ:
-      if (eL == BTN_SHORT) g_ppO2Target = PPO2_STD;  // 1.4 standard
-      if (eR == BTN_SHORT) g_ppO2Target = PPO2_MAX;  // 1.6 max
+      if (!g_ppO2Locked) {
+        if (eL == BTN_SHORT) g_ppO2Target = PPO2_STD;  // 1.4 standard
+        if (eR == BTN_SHORT) g_ppO2Target = PPO2_MAX;  // 1.6 max
+      }
       if (eC == BTN_SHORT) {
         if (g_armed) {
           g_armed = false;
