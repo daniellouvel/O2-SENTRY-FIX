@@ -32,20 +32,25 @@ Schéma complet de connexion des modules à l'ESP32-WROOM-32.
 Les quatre modules partagent le même bus I2C sur **G21 (SDA) / G22 (SCL)**. Chaque module a une adresse unique, aucun conflit.
 
 ```
- ESP32-WROOM-32
- ┌──────────────┐
- │  G21 (SDA)  ├───┬──────────┬──────────┬───────────┐
- │  G22 (SCL)  ├───┼───┬──────┼───┬──────┼───┬───────┼───┐
- │  3V3        ├───┼───┼──────┼───┼──────┼───┼───────┼───┼──┐
- │  GND        ├───┼───┼──────┼───┼──────┼───┼───────┼───┼──┼──┐
- └─────────────┘   │   │      │   │      │   │       │   │  │  │
-                  SDA SCL    SDA SCL    SDA SCL      SDA SCL │  │
-              ┌────┴───┴──┐┌─┴───┴──┐┌─┴───┴──────┐┌─┴───┴──┤  │
-              │ LCD 1602  ││ADS1115 ││ RTC DS3231 ││ PN532  │  │
-              │ I2C @0x27 ││ @0x48  ││   @0x68    ││ @0x24  │  │
-              └───────────┘└────────┘└────────────┘└────────┘  │
-                              VCC──────────────────────────────┘  │
-                              GND─────────────────────────────────┘
+ ESP32 G21 (SDA) ────┬──── LCD 1602  SDA (@0x27)
+                     ├──── ADS1115   SDA (@0x48)
+                     ├──── RTC DS3231 SDA (@0x68)
+                     └──── PN532     SDA (@0x24)
+
+ ESP32 G22 (SCL) ────┬──── LCD 1602  SCL
+                     ├──── ADS1115   SCL
+                     ├──── RTC DS3231 SCL
+                     └──── PN532     SCL
+
+ ESP32 3V3 ──────────┬──── LCD 1602  VCC
+                     ├──── ADS1115   VDD
+                     ├──── RTC DS3231 VCC
+                     └──── PN532     VCC  (voir note tension PN532)
+
+ ESP32 GND ──────────┬──── LCD 1602  GND
+                     ├──── ADS1115   GND
+                     ├──── RTC DS3231 GND
+                     └──── PN532     GND
 ```
 
 **Notes** :
@@ -143,23 +148,14 @@ La sensibilité est réglée par `TOUCH_THRESHOLD` dans [src/main.cpp](src/main.
 Le firmware détecte automatiquement le DS18B20 au démarrage. Si absent, aucune compensation n'est appliquée. Si présent, la mesure O2 est corrigée de ~0.3 %/°C.
 
 ```
-          DS18B20 (TO-92, vu de face, plat vers soi)
-               ┌─────┐
-               │  •  │
-               │ DS  │
-               │18B20│
-               └┬─┬─┬┘
-                │ │ │
-               GND│ VDD
-                  DQ
-                  │
-          4.7 kΩ  │      (pull-up OBLIGATOIRE)
-             ┌────┼────── 3V3 ESP32
-             │    │
-             └────┴────── G4 ESP32
-                  │
-                 GND ─── GND ESP32
-                 VDD ─── 3V3 ESP32
+      DS18B20 (TO-92, vu de face — le plat vers soi)
+      broche 1 = GND  │  broche 2 = DQ  │  broche 3 = VDD
+          │                   │                  │
+          │           4.7 kΩ  │  (pull-up OBLIGATOIRE)
+          │              ┌────┴──────────────────┤
+          │              │                       │
+        GND           G4 ESP32               3V3 ESP32
+       ESP32
 ```
 
 **Points importants** :
@@ -237,15 +233,19 @@ L'ESP32 fonctionne en **3.3 V** mais les WS2812B standard nécessitent un signal
 **Solution recommandée : level-shifter 74HCT245**
 
 ```
-                        74HCT245
-  G5 ESP32 ──────► A1 │         │ B1 ──────► DIN WS2812B
-              DIR = L  │         │
-  3V3 ───────────  VCC │         │ VCC ─────── 5V
-  GND ───────────  GND │         │ GND ─────── GND
+                         74HCT245
+  G5 ESP32  ──────► A1 │         │ B1 ──────► DIN WS2812B
+  GND       ──────  DIR│         │              (sens A→B)
+  GND       ──────  /OE│         │              (toujours actif)
+  5V        ──────  VCC│         │ VCC ──── 5V  (sorties 5V)
+  GND       ──────  GND│         │ GND ──── GND
                         └─────────┘
 ```
 
-> Une seule sortie utilisée (A1→B1). Les 7 autres peuvent être laissées non-connectées ou à GND.
+> **DIR à GND** = direction A→B (ESP32 → WS2812B).
+> **OE à GND** = sorties activées en permanence (actif bas).
+> Les entrées A2–A8 non utilisées peuvent rester en l'air.
+> Une seule sortie utilisée (A1→B1).
 
 **Alternative** : une diode Schottky (ex. 1N4148) en série sur la ligne 5V du WS2812B abaisse VCC à ~4.3 V, ce qui abaisse aussi le seuil de réception et rend la donnée 3.3 V plus fiable. Moins propre que le 74HCT245 mais fonctionnel en dépannage.
 
