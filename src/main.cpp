@@ -61,7 +61,8 @@ static const uint8_t PIN_PN532_RESET  = 19;
 static const uint8_t PIN_PRINTER_RX   = 16;   // RX UART2 (vers TX imprimante)
 static const uint8_t PIN_PRINTER_TX   = 17;   // TX UART2 (vers RX imprimante)
 static const uint8_t LCD_ADDR         = 0x27;
-static const uint8_t ADS_O2_CHANNEL   = 0;
+// Cellule O2 câblée en différentiel : (+) → A0, (−) → A1
+// Rejette le bruit secteur (CMRR ~90 dB) — important sur alim 220V
 
 // ============================================================================
 //  CONSTANTES LOGICIEL
@@ -366,7 +367,7 @@ static void resetStabilityBuffer() {
 }
 
 static void sampleO2() {
-  const int16_t raw = ads.readADC_SingleEnded(ADS_O2_CHANNEL);
+  const int16_t raw = ads.readADC_Differential_0_1();
   const float voltage = (float)raw * ADS_LSB_MV;
 
   float o2 = (g_calibMv > 0.1f)
@@ -872,7 +873,7 @@ static void enterHistory() {
 }
 
 static void performCalibration() {
-  const int16_t raw = ads.readADC_SingleEnded(ADS_O2_CHANNEL);
+  const int16_t raw = ads.readADC_Differential_0_1();
   const float mv    = (float)raw * ADS_LSB_MV;
   if (mv > 1.0f && mv < 50.0f) {
     saveCalibration(mv, g_currentTempC);

@@ -74,8 +74,8 @@ Voir [WIRING.md](WIRING.md) pour le détail complet (schémas ASCII, notes nivea
 | PN532 RESET (optionnel) | G19 |
 | Imprimante TSC — UART2 TX | G17 |
 | Imprimante TSC — UART2 RX | G16 |
-| Cellule O2 (+) | ADS1115 A0 |
-| Cellule O2 (−) | ADS1115 GND |
+| Cellule O2 (+) | ADS1115 A0 (différentiel) |
+| Cellule O2 (−) | ADS1115 A1 (différentiel) |
 
 ---
 

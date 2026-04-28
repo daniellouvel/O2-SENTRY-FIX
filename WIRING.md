@@ -60,25 +60,39 @@ Les quatre modules partagent le même bus I2C sur **G21 (SDA) / G22 (SCL)**. Cha
 
 La cellule galvanique produit une tension faible (9–13 mV à l'air). Le gain `GAIN_SIXTEEN` de l'ADS1115 (±256 mV, LSB = 7.8 µV) est optimal.
 
+### Mode de mesure : différentiel A0−A1
+
+Le firmware utilise `readADC_Differential_0_1()` : l'ADS mesure exactement **V(A0) − V(A1)**, indépendamment du potentiel absolu de chaque fil. Les deux fils de la cellule sont traités symétriquement.
+
+**Pourquoi le différentiel est obligatoire ici :**
+- Alimentation 220V secteur → bruit résiduel sur le GND de l'alimentation
+- Câble cellule (20–50 cm) capte le champ 50 Hz comme une antenne
+- En différentiel, le bruit commun aux deux fils est annulé (CMRR ≈ 90 dB de l'ADS1115)
+- En single-ended (A0/GND), ce bruit s'additionne à la mesure → instabilité sur les 2–3 derniers bits
+
 ```
-                      ADS1115
-                    ┌─────────┐
-     Cellule O2     │         │
-   ┌───────────┐    │   A0 ◄──┼─── (+) cellule
-   │    (+) ●──┼────┤         │
-   │    (−) ●──┼────┤  GND ◄──┼─── (−) cellule
-   └───────────┘    │         │
-                    │   VDD ──┼─── 3V3 ESP32
-                    │   GND ──┼─── GND ESP32
-                    │   SDA ──┼─── G21 ESP32
-                    │   SCL ──┼─── G22 ESP32
-                    │  ADDR ──┼─── GND (→ adresse 0x48)
-                    └─────────┘
+                        ADS1115
+                      ┌─────────┐
+       Cellule O2     │         │
+   ┌────────────┐     │  A0 ◄───┼─── (+) cellule   ┐
+   │  (+) fil + ├─────┤         │                   │ mesure
+   │  (−) fil − ├─────┤  A1 ◄───┼─── (−) cellule   ┘ différentielle
+   └────────────┘     │         │
+                      │  VDD ───┼─── 3V3 ESP32
+                      │  GND ───┼─── GND ESP32  ← masse commune, PAS relié à la cellule
+                      │  SDA ───┼─── G21 ESP32
+                      │  SCL ───┼─── G22 ESP32
+                      │  ADDR ──┼─── GND (→ adresse 0x48)
+                      └─────────┘
 ```
+
+> **Important** : le fil (−) de la cellule va sur **A1**, pas sur GND de l'ADS. Le GND de l'ADS reste uniquement la masse de l'alimentation du circuit.
 
 > L'ADS1115 fonctionne en **3.3 V** — ne pas le connecter au 5V de l'ESP32.
 
-**Polarité cellule O2** : fil **positif** (souvent rouge) sur **A0**, négatif sur **GND**. Polarité inversée → lecture 0 %.
+**Polarité** : fil positif de la cellule (souvent rouge) → **A0**, fil négatif → **A1**. Inversé → lecture négative (affiché 0 %).
+
+**Longueur du câble cellule** : jusqu'à 1 m en câble blindé (tresse → GND, fils signal sur A0/A1) sans dégradation visible. Au-delà, ajouter un condensateur de 100 nF entre A0 et A1 pour filtrer les HF.
 
 ---
 
@@ -356,7 +370,7 @@ Tous les GND reliés en **étoile** sur un point commun (barrette bus ou pin GND
 
 ## Checklist avant premier allumage
 
-- [ ] Polarité cellule O2 : (+) sur A0, (−) sur GND de l'ADS1115
+- [ ] Cellule O2 en différentiel : (+) sur **A0**, (−) sur **A1** (pas sur GND)
 - [ ] Jumper ADDR ADS1115 → **GND** (adresse 0x48)
 - [ ] DIP switches PN532 → **I2C** (SEL0 OFF, SEL1 ON)
 - [ ] Pile CR2032 dans le RTC (maintien de l'heure hors tension)
