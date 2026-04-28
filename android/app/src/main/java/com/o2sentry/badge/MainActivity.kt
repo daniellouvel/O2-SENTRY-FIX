@@ -69,14 +69,21 @@ class MainActivity : AppCompatActivity() {
     // singleTop : même activité reçoit le tag quand elle est au premier plan
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        val diver = selectedDiver ?: return
         val tag: Tag? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra(NfcAdapter.EXTRA_TAG, Tag::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra(NfcAdapter.EXTRA_TAG)
         }
-        tag?.let { handleTag(it, diver) }
+
+        tag?.let {
+            val diver = selectedDiver
+            if (diver != null) {
+                handleTag(it, diver)
+            } else {
+                identifyTag(it)
+            }
+        }
     }
 
     // ── NFC ────────────────────────────────────────────────────────────────────
@@ -87,6 +94,27 @@ class MainActivity : AppCompatActivity() {
         val pi = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_MUTABLE)
         val filters = arrayOf(IntentFilter(NfcAdapter.ACTION_TAG_DISCOVERED))
         adapter.enableForegroundDispatch(this, pi, filters, null)
+    }
+
+    private fun identifyTag(tag: Tag) {
+        Thread {
+            val name = NfcWriter.readBlock4(tag)
+            runOnUiThread {
+                if (name != null && name.isNotEmpty()) {
+                    MaterialAlertDialogBuilder(this)
+                        .setTitle("Badge identifié")
+                        .setMessage("Plongeur : $name")
+                        .setPositiveButton("OK", null)
+                        .show()
+                } else {
+                    MaterialAlertDialogBuilder(this)
+                        .setTitle("Badge inconnu")
+                        .setMessage("Aucune donnée lisible en bloc 4 ou carte incompatible.")
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+            }
+        }.start()
     }
 
     private fun handleTag(tag: Tag, diver: String) {

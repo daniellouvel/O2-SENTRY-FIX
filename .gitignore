@@ -15,3 +15,6 @@
 
 # Outils internes
 .claude/
+
+# Android Studio
+.idea/
