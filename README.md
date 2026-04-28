@@ -18,7 +18,7 @@ Projet de remplacement d'un analyseur O2 commercial défaillant, entièrement DI
 ## Fonctionnalités
 
 - **Mesure O2** via cellule galvanique + ADS1115 (résolution 7.8 µV)
-- **MOD** (Maximum Operating Depth) calculée en temps réel, ppO2 réglable 1.0 → 1.6
+- **MOD** (Maximum Operating Depth) calculée en temps réel, choix direct entre ppO2 **1.4** (standard) et **1.6** (max)
 - **Indicateur de stabilité** sur 15 lectures (seuil 0.1 %)
 - **Calibration à l'air** mémorisée en EEPROM (survit aux coupures)
 - **Horodatage RTC** sauvegardé même batterie débranchée
@@ -108,9 +108,9 @@ pio run -e esp32-touch -t upload
 
 | Bouton | Appui court | Appui long (3 s) |
 |--------|-------------|-------------------|
-| **GAUCHE** | ppO2 − 0.1 (min 1.0) | Consulter l'historique |
+| **GAUCHE** | ppO2 = **1.4** (valeur standard) | Consulter l'historique |
 | **CENTRE** | Imprimer étiquette **sans nom** (ligne `Plongeur: ____` à remplir) | Entrer en réglage heure |
-| **DROITE** | ppO2 + 0.1 (max 1.6) | Lancer la calibration |
+| **DROITE** | ppO2 = **1.6** (valeur maximale) | Lancer la calibration |
 
 ### Workflow avec badge RFID (optionnel)
 

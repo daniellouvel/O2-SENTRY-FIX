@@ -78,9 +78,8 @@ static const uint16_t SPLASH_MS           = 2000;
 static const uint16_t SPLASH_NOCAL_MS     = 5000;
 static const uint16_t TEMP_INTERVAL_MS    = 2000;
 static const uint16_t TEMP_CONV_MS        = 800;
-static const float    PPO2_MIN            = 1.0f;
-static const float    PPO2_MAX            = 1.6f;
-static const float    PPO2_STEP           = 0.1f;
+static const float    PPO2_STD            = 1.4f;  // valeur standard (GAUCHE)
+static const float    PPO2_MAX            = 1.6f;  // valeur max     (DROITE)
 static const float    CALIB_REF_PERCENT   = 20.9f;
 static const float    ADS_LSB_MV          = 0.0078125f;
 static const float    TEMP_COEFF_PER_C    = 0.003f;
@@ -995,14 +994,8 @@ void loop() {
       break;
 
     case MODE_READ:
-      if (eL == BTN_SHORT) {
-        g_ppO2Target -= PPO2_STEP;
-        if (g_ppO2Target < PPO2_MIN) g_ppO2Target = PPO2_MIN;
-      }
-      if (eR == BTN_SHORT) {
-        g_ppO2Target += PPO2_STEP;
-        if (g_ppO2Target > PPO2_MAX) g_ppO2Target = PPO2_MAX;
-      }
+      if (eL == BTN_SHORT) g_ppO2Target = PPO2_STD;  // 1.4 standard
+      if (eR == BTN_SHORT) g_ppO2Target = PPO2_MAX;  // 1.6 max
       if (eC == BTN_SHORT) {
         if (g_armed) {
           g_armed = false;
