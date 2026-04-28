@@ -27,7 +27,7 @@ Projet de remplacement d'un analyseur O2 commercial défaillant, entièrement DI
 - **Identification du plongeur par badge RFID** (Mifare Classic) — impression auto avec nom
 - **LED RGB** d'état visible de loin (couleurs par mode)
 - **Compensation thermique** via DS18B20 optionnel
-- **Historique EEPROM** des 10 dernières analyses
+- **Historique EEPROM** des 50 dernières analyses
 - **Impression d'étiquette** TSPL sur imprimante thermique TSC TH240
 - **Interface 3 boutons tactiles** (appui court / appui long)
 - **Affichage LCD 16×2** rétroéclairé

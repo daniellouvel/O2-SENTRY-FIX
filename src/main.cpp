@@ -146,7 +146,7 @@ button:active{background:#1565c0}
 <div class="card">
 <h2 style="display:flex;justify-content:space-between;align-items:center;cursor:pointer"
     onclick="tog()">
-  Historique (10 dernieres analyses)
+  Historique (50 dernieres analyses)
   <span id="arr" style="font-size:1.2em;color:#4fc3f7">&#9660;</span>
 </h2>
 <div id="hc">
@@ -257,7 +257,7 @@ static const uint8_t  LED_BRIGHTNESS      = 80;
 static const uint16_t LED_BLINK_MS        = 500;
 
 // EEPROM layout
-static const int EEPROM_SIZE             = 300;  // 16 header + 10×25 history
+static const int EEPROM_SIZE             = 1300; // 16 header + 50×25 history
 static const int EEPROM_CALIB_ADDR       = 0;
 static const int EEPROM_INITIAL_ADDR     = 4;
 static const int EEPROM_CALIB_TEMP_ADDR  = 8;
@@ -266,7 +266,7 @@ static const int EEPROM_HIST_COUNT_ADDR  = 13;
 static const int EEPROM_HIST_IDX_ADDR    = 14;
 static const int EEPROM_HIST_BASE        = 16;
 static const uint8_t EEPROM_MAGIC        = 0xA5;
-static const uint8_t HIST_MAX            = 10;
+static const uint8_t HIST_MAX            = 50;
 static const uint8_t HIST_RECORD_SIZE    = 25;  // 11 données + 14 nom plongeur
 
 // ============================================================================
