@@ -144,9 +144,15 @@ button:active{background:#1565c0}
 </div>
 
 <div class="card">
-<h2>Historique (10 dernieres analyses)</h2>
+<h2 style="display:flex;justify-content:space-between;align-items:center;cursor:pointer"
+    onclick="tog()">
+  Historique (10 dernieres analyses)
+  <span id="arr" style="font-size:1.2em;color:#4fc3f7">&#9660;</span>
+</h2>
+<div id="hc">
 <div id="hl"><em style="color:#666">Chargement...</em></div>
 <button onclick="loadH()" style="margin-top:10px">Rafraichir</button>
+</div>
 </div>
 
 <div class="foot">O2-Sentry &bull; WiFi AP &bull; 192.168.4.1</div>
@@ -179,6 +185,12 @@ function apply(){
       upd();
     });
 }
+var hOpen=true;
+function tog(){
+  hOpen=!hOpen;
+  document.getElementById('hc').style.display=hOpen?'block':'none';
+  document.getElementById('arr').innerHTML=hOpen?'&#9660;':'&#9654;';
+}
 function loadH(){
   fetch('/history').then(r=>r.json()).then(function(d){
     var el=document.getElementById('hl');
@@ -186,11 +198,13 @@ function loadH(){
     var h='<table style="width:100%;border-collapse:collapse;font-size:.82em">';
     h+='<tr style="color:#4fc3f7;border-bottom:1px solid #0f3460">';
     h+='<th style="text-align:left;padding:4px">Date/Heure</th>';
+    h+='<th style="text-align:left;padding:4px">Plongeur</th>';
     h+='<th>O2</th><th>ppO2</th><th>MOD</th></tr>';
     d.forEach(function(r,i){
       var s=i===0?'color:#ffa726':'';
       h+='<tr style="border-top:1px solid #0f3460;'+s+'">';
       h+='<td style="padding:4px">'+r.date+' '+r.time+'</td>';
+      h+='<td style="padding:4px">'+(r.name||'&mdash;')+'</td>';
       h+='<td style="text-align:center">'+r.o2.toFixed(1)+'%</td>';
       h+='<td style="text-align:center">'+r.ppo2.toFixed(1)+'</td>';
       h+='<td style="text-align:center">'+r.mod+'m</td></tr>';
@@ -243,7 +257,7 @@ static const uint8_t  LED_BRIGHTNESS      = 80;
 static const uint16_t LED_BLINK_MS        = 500;
 
 // EEPROM layout
-static const int EEPROM_SIZE             = 256;
+static const int EEPROM_SIZE             = 300;  // 16 header + 10×25 history
 static const int EEPROM_CALIB_ADDR       = 0;
 static const int EEPROM_INITIAL_ADDR     = 4;
 static const int EEPROM_CALIB_TEMP_ADDR  = 8;
@@ -253,7 +267,7 @@ static const int EEPROM_HIST_IDX_ADDR    = 14;
 static const int EEPROM_HIST_BASE        = 16;
 static const uint8_t EEPROM_MAGIC        = 0xA5;
 static const uint8_t HIST_MAX            = 10;
-static const uint8_t HIST_RECORD_SIZE    = 11;
+static const uint8_t HIST_RECORD_SIZE    = 25;  // 11 données + 14 nom plongeur
 
 // ============================================================================
 //  OBJETS GLOBAUX
@@ -460,9 +474,10 @@ struct HistRecord {
   uint16_t fO2_x10;
   uint16_t ppO2_x10;
   uint16_t mod;
+  char     name[NAME_MAX_LEN];  // 14 octets, sans null-terminateur
 };
 static_assert(sizeof(HistRecord) == HIST_RECORD_SIZE,
-              "HistRecord layout must be 11 bytes for EEPROM addressing");
+              "HistRecord layout must be 25 bytes for EEPROM addressing");
 
 static uint8_t histCount() {
   uint8_t c = 0;
@@ -846,6 +861,8 @@ static void printLabel(const char *plongeurName) {
   r.fO2_x10    = (uint16_t)o2x10;
   r.ppO2_x10   = (uint16_t)px10;
   r.mod        = (uint16_t)mod;
+  memset(r.name, 0, NAME_MAX_LEN);
+  memcpy(r.name, g_currentName, strnlen(g_currentName, NAME_MAX_LEN));
   histAdd(r);
 }
 
@@ -1065,15 +1082,19 @@ static void webHandleHistory() {
     HistRecord r;
     if (!histRead(i, r)) continue;
     if (i > 0) json += ",";
-    char buf[128];
+    // Extraire le nom (pas null-terminé en EEPROM)
+    char nm[NAME_MAX_LEN + 1] = {0};
+    memcpy(nm, r.name, NAME_MAX_LEN);
+    char buf[160];
     snprintf(buf, sizeof(buf),
       "{\"date\":\"%02d/%02d/%02d\",\"time\":\"%02d:%02d\","
-      "\"o2\":%.1f,\"ppo2\":%.1f,\"mod\":%d}",
+      "\"o2\":%.1f,\"ppo2\":%.1f,\"mod\":%d,\"name\":\"%s\"}",
       r.day, r.month, (r.yearOffset + 24) % 100,
       r.hour, r.minute,
       r.fO2_x10  / 10.0f,
       r.ppO2_x10 / 10.0f,
-      (int)r.mod
+      (int)r.mod,
+      nm
     );
     json += buf;
   }
