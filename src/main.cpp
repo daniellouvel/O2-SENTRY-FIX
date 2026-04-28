@@ -143,6 +143,12 @@ button:active{background:#1565c0}
 <div class="msg" id="msg"></div>
 </div>
 
+<div class="card">
+<h2>Historique (10 dernieres analyses)</h2>
+<div id="hl"><em style="color:#666">Chargement...</em></div>
+<button onclick="loadH()" style="margin-top:10px">Rafraichir</button>
+</div>
+
 <div class="foot">O2-Sentry &bull; WiFi AP &bull; 192.168.4.1</div>
 
 <script>
@@ -173,7 +179,28 @@ function apply(){
       upd();
     });
 }
+function loadH(){
+  fetch('/history').then(r=>r.json()).then(function(d){
+    var el=document.getElementById('hl');
+    if(!d.length){el.innerHTML='<em style="color:#666">Aucune analyse enregistree</em>';return;}
+    var h='<table style="width:100%;border-collapse:collapse;font-size:.82em">';
+    h+='<tr style="color:#4fc3f7;border-bottom:1px solid #0f3460">';
+    h+='<th style="text-align:left;padding:4px">Date/Heure</th>';
+    h+='<th>O2</th><th>ppO2</th><th>MOD</th></tr>';
+    d.forEach(function(r,i){
+      var s=i===0?'color:#ffa726':'';
+      h+='<tr style="border-top:1px solid #0f3460;'+s+'">';
+      h+='<td style="padding:4px">'+r.date+' '+r.time+'</td>';
+      h+='<td style="text-align:center">'+r.o2.toFixed(1)+'%</td>';
+      h+='<td style="text-align:center">'+r.ppo2.toFixed(1)+'</td>';
+      h+='<td style="text-align:center">'+r.mod+'m</td></tr>';
+    });
+    h+='</table>';
+    el.innerHTML=h;
+  }).catch(function(){});
+}
 upd();
+loadH();
 setInterval(upd,2000);
 </script>
 </body>
@@ -1031,6 +1058,29 @@ static void webHandleData() {
   server.send(200, "application/json", json);
 }
 
+static void webHandleHistory() {
+  const uint8_t c = histCount();
+  String json = "[";
+  for (uint8_t i = 0; i < c; i++) {
+    HistRecord r;
+    if (!histRead(i, r)) continue;
+    if (i > 0) json += ",";
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+      "{\"date\":\"%02d/%02d/%02d\",\"time\":\"%02d:%02d\","
+      "\"o2\":%.1f,\"ppo2\":%.1f,\"mod\":%d}",
+      r.day, r.month, (r.yearOffset + 24) % 100,
+      r.hour, r.minute,
+      r.fO2_x10  / 10.0f,
+      r.ppO2_x10 / 10.0f,
+      (int)r.mod
+    );
+    json += buf;
+  }
+  json += "]";
+  server.send(200, "application/json", json);
+}
+
 static void webHandleSetPpO2() {
   if (server.hasArg("ppo2")) {
     const float v = server.arg("ppo2").toFloat();
@@ -1106,9 +1156,10 @@ void setup() {
 
   // WiFi Access Point + serveur web
   WiFi.softAP(WIFI_SSID, WIFI_PASS);
-  server.on("/",      HTTP_GET,  webHandleRoot);
-  server.on("/data",  HTTP_GET,  webHandleData);
-  server.on("/ppo2",  HTTP_POST, webHandleSetPpO2);
+  server.on("/",        HTTP_GET,  webHandleRoot);
+  server.on("/data",    HTTP_GET,  webHandleData);
+  server.on("/history", HTTP_GET,  webHandleHistory);
+  server.on("/ppo2",    HTTP_POST, webHandleSetPpO2);
   server.begin();
 }
 
