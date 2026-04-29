@@ -10,7 +10,6 @@
         <item name="colorSurfaceVariant">@color/bg_border</item>
         <item name="colorOnSurfaceVariant">@color/text_secondary</item>
         <item name="android:colorBackground">@color/bg_dark</item>
-        <item name="colorBackground">@color/bg_dark</item>
         <item name="android:windowBackground">@color/bg_dark</item>
         <item name="android:fontFamily">monospace</item>
     </style>
