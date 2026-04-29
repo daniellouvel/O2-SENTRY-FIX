@@ -66,6 +66,11 @@ class MainActivity : AppCompatActivity() {
         nfcAdapter?.disableForegroundDispatch(this)
     }
 
+    override fun onDestroy() {
+        writeDialog?.dismiss()
+        super.onDestroy()
+    }
+
     // singleTop : même activité reçoit le tag quand elle est au premier plan
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -91,7 +96,8 @@ class MainActivity : AppCompatActivity() {
     private fun enableForegroundDispatch() {
         val adapter = nfcAdapter ?: return
         val intent = Intent(this, javaClass).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        val pi = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_MUTABLE)
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+        val pi = PendingIntent.getActivity(this, 0, intent, flags)
         val filters = arrayOf(IntentFilter(NfcAdapter.ACTION_TAG_DISCOVERED))
         adapter.enableForegroundDispatch(this, pi, filters, null)
     }
@@ -130,8 +136,7 @@ class MainActivity : AppCompatActivity() {
                         .setMessage("$diver enregistré sur la carte.")
                         .setPositiveButton("OK", null)
                         .show()
-                    // Vibration courte pour feedback
-                    binding.root.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                    binding.root.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
                 } else {
                     MaterialAlertDialogBuilder(this)
                         .setTitle("Erreur")
