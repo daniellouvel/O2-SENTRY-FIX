@@ -32,6 +32,7 @@
 #include <Adafruit_NeoPixel.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <DNSServer.h>
 
 // ============================================================================
 //  CONFIGURATION : choix du type de bouton (compile-time)
@@ -74,6 +75,7 @@ static const uint8_t LCD_ADDR         = 0x27;
 static const char*  WIFI_SSID = "O2-Sentry";
 static const char*  WIFI_PASS = "plongee24";  // min 8 car. ou "" pour réseau ouvert
 static WebServer    server(80);
+static DNSServer    dnsServer;
 
 // Page HTML embarquée en flash (raw string literal)
 static const char HTML_PAGE[] PROGMEM = R"rawliteral(
@@ -1118,6 +1120,9 @@ static void webHandleSetPpO2() {
 //  SETUP / LOOP
 // ============================================================================
 void setup() {
+  Serial.begin(115200);
+  Serial.println("\n=== O2 Sentry demarrage ===");
+
   // Boutons : pinMode necessaire seulement en mode TTP223
 #if BUTTON_MODE == 0
   pinMode(PIN_BTN_LEFT,   INPUT);
@@ -1178,20 +1183,28 @@ void setup() {
   // Timeout I2C court pour ne pas bloquer le loop quand le hardware est absent
   Wire.setTimeOut(15);
 
-  // WiFi Access Point + serveur web
+  // WiFi Access Point
   WiFi.softAP(WIFI_SSID, WIFI_PASS);
+  Serial.print("AP IP : ");
+  Serial.println(WiFi.softAPIP());
+
+  // DNS : redirige toutes les requetes vers l'ESP32 (portail captif Android/iPhone)
+  dnsServer.start(53, "*", WiFi.softAPIP());
+
+  // Serveur web
   server.on("/",        HTTP_GET,  webHandleRoot);
   server.on("/data",    HTTP_GET,  webHandleData);
   server.on("/history", HTTP_GET,  webHandleHistory);
   server.on("/ppo2",    HTTP_POST, webHandleSetPpO2);
-  // Captive portal : Android/iPhone redirigent leurs checks vers la page principale
   server.onNotFound(webHandleRoot);
   server.begin();
+  Serial.println("Serveur web demarre - http://192.168.4.1");
 }
 
 void loop() {
   const uint32_t now = millis();
 
+  dnsServer.processNextRequest();
   server.handleClient();
   updateTemperature();
   updateLED();
