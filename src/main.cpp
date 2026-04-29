@@ -1123,14 +1123,43 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n=== O2 Sentry demarrage ===");
 
-  // Boutons : pinMode necessaire seulement en mode TTP223
+  // ── WiFi + DNS + Web EN PREMIER ────────────────────────────────────────────
+  // Demarrage avant l'I2C pour rester accessible meme si un peripherique bloque
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(
+    IPAddress(192, 168, 4, 1),
+    IPAddress(192, 168, 4, 1),
+    IPAddress(255, 255, 255, 0)
+  );
+  const bool apOK = WiFi.softAP(WIFI_SSID, WIFI_PASS, 6, false, 4);
+  Serial.printf("WiFi AP %s  IP=%s\n", apOK ? "OK" : "ECHEC",
+                WiFi.softAPIP().toString().c_str());
+
+  dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
+
+  server.on("/",        HTTP_GET,  webHandleRoot);
+  server.on("/data",    HTTP_GET,  webHandleData);
+  server.on("/history", HTTP_GET,  webHandleHistory);
+  server.on("/ppo2",    HTTP_POST, webHandleSetPpO2);
+  // Portail captif : repond aux checks Android (/generate_204) et iOS
+  server.on("/generate_204",              HTTP_GET, [](){ server.send(204, "text/plain", ""); });
+  server.on("/hotspot-detect.html",       HTTP_GET, [](){ server.send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"); });
+  server.on("/library/test/success.html", HTTP_GET, [](){ server.send(200, "text/html", "Success"); });
+  server.on("/connecttest.txt",           HTTP_GET, [](){ server.send(200, "text/plain", "Microsoft Connect Test"); });
+  server.on("/ncsi.txt",                  HTTP_GET, [](){ server.send(200, "text/plain", "Microsoft NCSI"); });
+  server.onNotFound(webHandleRoot);
+  server.begin();
+  Serial.println("Serveur web demarre - http://192.168.4.1");
+
+  // ── Boutons ─────────────────────────────────────────────────────────────────
 #if BUTTON_MODE == 0
   pinMode(PIN_BTN_LEFT,   INPUT);
   pinMode(PIN_BTN_CENTER, INPUT);
   pinMode(PIN_BTN_RIGHT,  INPUT);
 #endif
 
-  // I2C : sur ESP32 par defaut SDA=21, SCL=22
+  // ── I2C ─────────────────────────────────────────────────────────────────────
+  Wire.setTimeOut(15);   // timeout court d'emblee, avant tout appel I2C
   Wire.begin();
 
   lcd.init();
@@ -1146,9 +1175,10 @@ void setup() {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
-  // UART2 sur ESP32 (Serial2) - 9600 bauds vers l'imprimante TSC
+  // ── UART2 ───────────────────────────────────────────────────────────────────
   printer.begin(9600, SERIAL_8N1, PIN_PRINTER_RX, PIN_PRINTER_TX);
 
+  // ── DS18B20 ─────────────────────────────────────────────────────────────────
   tempSensor.begin();
   tempSensor.setWaitForConversion(false);
   g_tempPresent = (tempSensor.getDeviceCount() > 0);
@@ -1158,11 +1188,13 @@ void setup() {
     g_tempReqPending = true;
   }
 
+  // ── LED ─────────────────────────────────────────────────────────────────────
   pixel.begin();
   pixel.setBrightness(LED_BRIGHTNESS);
   pixel.clear();
   pixel.show();
 
+  // ── PN532 ───────────────────────────────────────────────────────────────────
   pn532.begin();
   const uint32_t fw = pn532.getFirmwareVersion();
   if (fw != 0) {
@@ -1170,7 +1202,7 @@ void setup() {
     g_pn532Present = true;
   }
 
-  // EEPROM emule sur ESP32 - allocation explicite
+  // ── EEPROM ──────────────────────────────────────────────────────────────────
   EEPROM.begin(EEPROM_SIZE);
   loadCalibration();
   resetStabilityBuffer();
@@ -1180,34 +1212,7 @@ void setup() {
   g_pendingSetTime = rtcLost;
   displaySplash();
 
-  // Timeout I2C court pour ne pas bloquer le loop quand le hardware est absent
-  Wire.setTimeOut(15);
-
-  // WiFi Access Point
-  WiFi.softAP(WIFI_SSID, WIFI_PASS);
-  Serial.print("AP IP : ");
-  Serial.println(WiFi.softAPIP());
-
-  // DNS : redirige toutes les requetes vers l'ESP32 (portail captif Android/iPhone)
-  dnsServer.start(53, "*", WiFi.softAPIP());
-
-  // Serveur web
-  server.on("/",        HTTP_GET,  webHandleRoot);
-  server.on("/data",    HTTP_GET,  webHandleData);
-  server.on("/history", HTTP_GET,  webHandleHistory);
-  server.on("/ppo2",    HTTP_POST, webHandleSetPpO2);
-
-  // Portail captif : Android vérifie /generate_204, iOS /hotspot-detect.html
-  // Répondre 204 fait croire au téléphone qu'il y a internet → trafic via WiFi
-  server.on("/generate_204",            HTTP_GET, [](){ server.send(204, "text/plain", ""); });
-  server.on("/hotspot-detect.html",     HTTP_GET, [](){ server.send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"); });
-  server.on("/library/test/success.html", HTTP_GET, [](){ server.send(200, "text/html", "Success"); });
-  server.on("/connecttest.txt",         HTTP_GET, [](){ server.send(200, "text/plain", "Microsoft Connect Test"); });
-  server.on("/ncsi.txt",               HTTP_GET, [](){ server.send(200, "text/plain", "Microsoft NCSI"); });
-
-  server.onNotFound(webHandleRoot);
-  server.begin();
-  Serial.println("Serveur web demarre - http://192.168.4.1");
+  Serial.println("Setup termine.");
 }
 
 void loop() {
