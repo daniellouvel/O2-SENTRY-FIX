@@ -1175,12 +1175,17 @@ void setup() {
   g_pendingSetTime = rtcLost;
   displaySplash();
 
+  // Timeout I2C court pour ne pas bloquer le loop quand le hardware est absent
+  Wire.setTimeOut(15);
+
   // WiFi Access Point + serveur web
   WiFi.softAP(WIFI_SSID, WIFI_PASS);
   server.on("/",        HTTP_GET,  webHandleRoot);
   server.on("/data",    HTTP_GET,  webHandleData);
   server.on("/history", HTTP_GET,  webHandleHistory);
   server.on("/ppo2",    HTTP_POST, webHandleSetPpO2);
+  // Captive portal : Android/iPhone redirigent leurs checks vers la page principale
+  server.onNotFound(webHandleRoot);
   server.begin();
 }
 
