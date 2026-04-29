@@ -465,7 +465,7 @@ static uint8_t cellLifePercent() {
   return (uint8_t)pct;
 }
 
-struct HistRecord {
+struct __attribute__((packed)) HistRecord {
   uint8_t  yearOffset;
   uint8_t  month;
   uint8_t  day;
