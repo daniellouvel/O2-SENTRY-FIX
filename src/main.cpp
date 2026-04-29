@@ -1196,6 +1196,15 @@ void setup() {
   server.on("/data",    HTTP_GET,  webHandleData);
   server.on("/history", HTTP_GET,  webHandleHistory);
   server.on("/ppo2",    HTTP_POST, webHandleSetPpO2);
+
+  // Portail captif : Android vérifie /generate_204, iOS /hotspot-detect.html
+  // Répondre 204 fait croire au téléphone qu'il y a internet → trafic via WiFi
+  server.on("/generate_204",            HTTP_GET, [](){ server.send(204, "text/plain", ""); });
+  server.on("/hotspot-detect.html",     HTTP_GET, [](){ server.send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"); });
+  server.on("/library/test/success.html", HTTP_GET, [](){ server.send(200, "text/html", "Success"); });
+  server.on("/connecttest.txt",         HTTP_GET, [](){ server.send(200, "text/plain", "Microsoft Connect Test"); });
+  server.on("/ncsi.txt",               HTTP_GET, [](){ server.send(200, "text/plain", "Microsoft NCSI"); });
+
   server.onNotFound(webHandleRoot);
   server.begin();
   Serial.println("Serveur web demarre - http://192.168.4.1");
