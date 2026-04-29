@@ -3,17 +3,22 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="@color/bg_dark">
 
     <com.google.android.material.appbar.AppBarLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content">
+        android:layout_height="wrap_content"
+        android:background="@color/bg_card"
+        app:elevation="0dp">
 
         <com.google.android.material.appbar.MaterialToolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            app:title="O2 Sentry — Badges RFID" />
+            android:background="@color/bg_card"
+            app:title="⚡ O2 Sentry — Badges RFID"
+            app:titleTextColor="@color/accent_blue" />
 
     </com.google.android.material.appbar.AppBarLayout>
 
@@ -23,6 +28,7 @@
         android:layout_height="match_parent"
         android:padding="8dp"
         android:clipToPadding="false"
+        android:scrollbars="vertical"
         app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
         app:layout_behavior="@string/appbar_scrolling_view_behavior" />
 
@@ -32,8 +38,9 @@
         android:layout_height="match_parent"
         android:gravity="center"
         android:text="Aucun plongeur enregistré.\nAppuyer sur + pour en ajouter."
-        android:textColor="?android:attr/textColorSecondary"
+        android:textColor="@color/text_secondary"
         android:textSize="16sp"
+        android:fontFamily="monospace"
         android:visibility="gone"
         app:layout_behavior="@string/appbar_scrolling_view_behavior" />
 
@@ -44,6 +51,8 @@
         android:layout_gravity="bottom|end"
         android:layout_margin="16dp"
         android:contentDescription="Ajouter un plongeur"
+        app:backgroundTint="@color/bg_border"
+        app:tint="@color/accent_blue"
         app:srcCompat="@android:drawable/ic_input_add" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
