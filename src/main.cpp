@@ -266,6 +266,7 @@ static const int EEPROM_CALIB_TEMP_ADDR  = 8;
 static const int EEPROM_MAGIC_ADDR       = 12;
 static const int EEPROM_HIST_COUNT_ADDR  = 13;
 static const int EEPROM_HIST_IDX_ADDR    = 14;
+static const int EEPROM_SETTINGS_ADDR    = 15;  // bit0=ppO2(0→1.4,1→1.6) bit1=lock
 static const int EEPROM_HIST_BASE        = 16;
 static const uint8_t EEPROM_MAGIC        = 0xA5;
 static const uint8_t HIST_MAX            = 50;
@@ -438,6 +439,24 @@ static void loadCalibration() {
   g_initialCalibMv = 10.0f;
   g_calibTempC     = 20.0f;
   g_calibValid     = false;
+}
+
+static void saveSettings() {
+  uint8_t b = 0;
+  if (g_ppO2Target >= 1.55f) b |= 0x01;
+  if (g_ppO2Locked)          b |= 0x02;
+  EEPROM.put(EEPROM_SETTINGS_ADDR, b);
+  eepromCommit();
+}
+
+static void loadSettings() {
+  uint8_t magic = 0;
+  EEPROM.get(EEPROM_MAGIC_ADDR, magic);
+  if (magic != EEPROM_MAGIC) return;
+  uint8_t b = 0;
+  EEPROM.get(EEPROM_SETTINGS_ADDR, b);
+  g_ppO2Target = (b & 0x01) ? PPO2_MAX : PPO2_STD;
+  g_ppO2Locked = (b & 0x02) != 0;
 }
 
 static void saveCalibration(float mv, float tempC) {
@@ -1113,6 +1132,7 @@ static void webHandleSetPpO2() {
   if (server.hasArg("lock")) {
     g_ppO2Locked = (server.arg("lock") == "1");
   }
+  saveSettings();
   server.send(200, "text/plain", "OK");
 }
 
@@ -1142,11 +1162,11 @@ void setup() {
   server.on("/history", HTTP_GET,  webHandleHistory);
   server.on("/ppo2",    HTTP_POST, webHandleSetPpO2);
   // Portail captif : repond aux checks Android (/generate_204) et iOS
-  server.on("/generate_204",              HTTP_GET, [](){ server.send(204, "text/plain", ""); });
-  server.on("/hotspot-detect.html",       HTTP_GET, [](){ server.send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"); });
-  server.on("/library/test/success.html", HTTP_GET, [](){ server.send(200, "text/html", "Success"); });
-  server.on("/connecttest.txt",           HTTP_GET, [](){ server.send(200, "text/plain", "Microsoft Connect Test"); });
-  server.on("/ncsi.txt",                  HTTP_GET, [](){ server.send(200, "text/plain", "Microsoft NCSI"); });
+  server.on("/generate_204",              HTTP_ANY, [](){ server.send(204, "text/plain", ""); });
+  server.on("/hotspot-detect.html",       HTTP_ANY, [](){ server.send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"); });
+  server.on("/library/test/success.html", HTTP_ANY, [](){ server.send(200, "text/html", "Success"); });
+  server.on("/connecttest.txt",           HTTP_ANY, [](){ server.send(200, "text/plain", "Microsoft Connect Test"); });
+  server.on("/ncsi.txt",                  HTTP_ANY, [](){ server.send(200, "text/plain", "Microsoft NCSI"); });
   server.onNotFound(webHandleRoot);
   server.begin();
   Serial.println("Serveur web demarre - http://192.168.4.1");
@@ -1205,6 +1225,7 @@ void setup() {
   // ── EEPROM ──────────────────────────────────────────────────────────────────
   EEPROM.begin(EEPROM_SIZE);
   loadCalibration();
+  loadSettings();
   resetStabilityBuffer();
 
   g_mode           = MODE_SPLASH;
@@ -1263,8 +1284,8 @@ void loop() {
 
     case MODE_READ:
       if (!g_ppO2Locked) {
-        if (eL == BTN_SHORT) g_ppO2Target = PPO2_STD;  // 1.4 standard
-        if (eR == BTN_SHORT) g_ppO2Target = PPO2_MAX;  // 1.6 max
+        if (eL == BTN_SHORT) { g_ppO2Target = PPO2_STD; saveSettings(); }
+        if (eR == BTN_SHORT) { g_ppO2Target = PPO2_MAX; saveSettings(); }
       }
       if (eC == BTN_SHORT) {
         if (g_armed) {
