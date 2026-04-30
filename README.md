@@ -44,7 +44,7 @@ Projet de remplacement d'un analyseur O2 commercial défaillant, entièrement DI
 | ESP32-WROOM-32 (carte de dev 38 pins) | MCU principal | 4 MB flash, WiFi/BT non utilisés |
 | ADS1115 (I2C, 0x48) | ADC 16 bits | gain ×16, alimentation 3.3 V |
 | LCD 1602 I2C (0x27) | Affichage | avec module PCF8574 |
-| RTC DS3231 (ou DS1307) | Horloge temps réel | DS3231 recommandé (plus précis) |
+| Tiny RTC (DS1307 + AT24C32) | Horloge temps réel | module "Tiny RTC" standard — l'EEPROM AT24C32 n'est pas utilisée (l'ESP32 gère son propre stockage flash) |
 | 3× TTP223 **ou** 3 pads métalliques | Boutons tactiles | TTP223 = `BUTTON_MODE=0` · pads nus = `BUTTON_MODE=1` (touch ESP32) |
 | Imprimante TSC TH240 | Étiqueteuse thermique | UART2 9600 bauds + MAX3232 si RS-232 |
 | Cellule O2 (ex: R-17 Med, R-22, OOM-202) | Capteur galvanique | sortie ~9-13 mV à l'air |

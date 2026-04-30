@@ -314,7 +314,7 @@ static const uint8_t HIST_RECORD_SIZE    = 25;  // 11 données + 14 nom plongeur
 // ============================================================================
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 Adafruit_ADS1115  ads;
-RTC_DS3231        rtc;
+RTC_DS1307        rtc;
 HardwareSerial    printer(2);  // UART2
 OneWire           oneWire(PIN_TEMP);
 DallasTemperature tempSensor(&oneWire);
@@ -1253,7 +1253,7 @@ void setup() {
   ads.begin();
 
   rtc.begin();
-  const bool rtcLost = rtc.lostPower();
+  const bool rtcLost = !rtc.isrunning();
   if (rtcLost) {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
