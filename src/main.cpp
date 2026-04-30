@@ -26,6 +26,7 @@
 #include <Adafruit_ADS1X15.h>
 #include <RTClib.h>
 #include <EEPROM.h>
+#include "esp_task_wdt.h"
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <Adafruit_PN532.h>
@@ -131,7 +132,6 @@ input[type=datetime-local]{width:100%;padding:10px;background:#0f3460;color:#eee
 <div class="row"><span class="lbl">ppO2 ref</span><span class="val" id="ppo2c">--</span></div>
 <div class="row"><span class="lbl">Temperature</span><span class="val" id="temp">--</span></div>
 <div class="row"><span class="lbl">Calibration</span><span class="val" id="cal">--</span></div>
-<div class="row"><span class="lbl">Cellule O2</span><span class="val" id="celv">--</span></div>
 <div class="row"><span class="lbl">Pile RTC</span><span class="val" id="rtcs">--</span></div>
 </div>
 
@@ -151,6 +151,14 @@ input[type=datetime-local]{width:100%;padding:10px;background:#0f3460;color:#eee
 </div>
 
 <div class="card">
+<h2>Calibration cellule O2</h2>
+<div class="row"><span class="lbl">Derniere calibration</span><span class="val" id="caldt">--</span></div>
+<div class="row"><span class="lbl">Cellule O2</span><span class="val" id="celv">--</span></div>
+<button onclick="doCalib()">Calibrer a l'air (20.9 %)</button>
+<div class="msg" id="calmsg"></div>
+</div>
+
+<div class="card">
 <h2>Date / Heure</h2>
 <div class="row"><span class="lbl">RTC actuelle</span><span class="val" id="rtcv">--</span></div>
 <input type="datetime-local" id="dtp">
@@ -166,7 +174,10 @@ input[type=datetime-local]{width:100%;padding:10px;background:#0f3460;color:#eee
 </h2>
 <div id="hc">
 <div id="hl"><em style="color:#666">Chargement...</em></div>
-<button onclick="loadH()" style="margin-top:10px">Rafraichir</button>
+<div style="display:flex;gap:8px;margin-top:10px">
+<button onclick="loadH()" style="flex:1">Rafraichir</button>
+<a href="/history.csv" download style="flex:1;display:flex;align-items:center;justify-content:center;padding:13px;background:#0f3460;color:#4fc3f7;border:1px solid #4fc3f7;border-radius:8px;font-family:monospace;font-size:1em;text-decoration:none">Telecharger CSV</a>
+</div>
 </div>
 </div>
 
@@ -187,6 +198,7 @@ function upd(){
     var cv=document.getElementById('celv');
     cv.textContent=d.cell+'% ('+d.cellmv.toFixed(1)+' mV)';
     cv.className='val '+(d.cell>=80?'ok':(d.cell>=50?'warn':'err'));
+    document.getElementById('caldt').textContent=d.caldate||'Non calibre';
     var rs=document.getElementById('rtcs');
     if(d.rtcok){rs.textContent='OK';rs.className='val ok';}
     else{rs.textContent='Pile HS !';rs.className='val err';}
@@ -230,6 +242,18 @@ function setdt(){
       m.textContent='Heure reglée';
       setTimeout(function(){m.textContent='';},2500);
       dtInited=false;upd();
+    });
+}
+function doCalib(){
+  if(!confirm('Exposer la cellule a l\'air ambiant (20.9 %) et attendre la stabilisation.\n\nLancer la calibration ?'))return;
+  fetch('/calibrate',{method:'POST'})
+    .then(r=>r.json()).then(function(d){
+      var m=document.getElementById('calmsg');
+      if(d.ok){m.textContent='Calibration OK — '+d.mv.toFixed(1)+' mV, cellule '+d.cell+'%';m.className='msg ok';}
+      else if(d.err==='instable'){m.textContent='Mesure instable — attendre [OK]';m.className='msg warn';}
+      else{m.textContent='Echec — tension hors plage';m.className='msg err';}
+      setTimeout(function(){m.textContent='';m.className='msg';},4000);
+      upd();
     });
 }
 var hOpen=true;
@@ -313,6 +337,7 @@ static const int EEPROM_HIST_COUNT_ADDR  = 13;
 static const int EEPROM_HIST_IDX_ADDR    = 14;
 static const int EEPROM_SETTINGS_ADDR    = 15;  // bit0=ppO2(0→1.4,1→1.6) bit1=lock
 static const int EEPROM_HIST_BASE        = 16;
+static const int EEPROM_CALIB_DATE_ADDR  = 1266; // 5 octets : day,month,yearOff,hour,min
 static const uint8_t EEPROM_MAGIC        = 0xA5;
 static const uint8_t HIST_MAX            = 50;
 static const uint8_t HIST_RECORD_SIZE    = 25;  // 11 données + 14 nom plongeur
@@ -357,6 +382,9 @@ static uint32_t     g_feedbackEnd    = 0;
 static uint32_t     g_splashEnd      = 0;
 static bool         g_pendingSetTime = false;
 static bool         g_rtcOK          = false;
+static bool     g_calibDateValid = false;
+static uint8_t  g_calibDay = 0, g_calibMonth = 0, g_calibYearOff = 0;
+static uint8_t  g_calibHour = 0, g_calibMin = 0;
 
 // ============================================================================
 //  ETAT CAPTEUR / UTILISATEUR
@@ -477,6 +505,20 @@ static void loadCalibration() {
       g_calibMv        = v;
       g_initialCalibMv = (!isnan(vi) && vi > 0.1f && vi < 100.0f) ? vi : v;
       g_calibTempC     = (!isnan(t)  && t  > -10.0f && t < 80.0f) ? t  : 20.0f;
+      // chargement horodatage calibration
+      {
+        uint8_t cd = 0, cm = 0, cy = 0, ch = 0, cmi = 0;
+        EEPROM.get(EEPROM_CALIB_DATE_ADDR,     cd);
+        EEPROM.get(EEPROM_CALIB_DATE_ADDR + 1, cm);
+        EEPROM.get(EEPROM_CALIB_DATE_ADDR + 2, cy);
+        EEPROM.get(EEPROM_CALIB_DATE_ADDR + 3, ch);
+        EEPROM.get(EEPROM_CALIB_DATE_ADDR + 4, cmi);
+        if (cd >= 1 && cd <= 31 && cm >= 1 && cm <= 12 && ch <= 23 && cmi <= 59) {
+          g_calibDay = cd; g_calibMonth = cm; g_calibYearOff = cy;
+          g_calibHour = ch; g_calibMin = cmi;
+          g_calibDateValid = true;
+        }
+      }
       g_calibValid     = true;
       return;
     }
@@ -522,6 +564,21 @@ static void saveCalibration(float mv, float tempC) {
 
   const uint8_t magic = EEPROM_MAGIC;
   EEPROM.put(EEPROM_MAGIC_ADDR, magic);
+  // sauvegarde horodatage calibration
+  {
+    const DateTime now = rtc.now();
+    g_calibDay     = now.day();
+    g_calibMonth   = now.month();
+    g_calibYearOff = (now.year() >= 2024) ? (uint8_t)(now.year() - 2024) : 0;
+    g_calibHour    = now.hour();
+    g_calibMin     = now.minute();
+    g_calibDateValid = true;
+    EEPROM.put(EEPROM_CALIB_DATE_ADDR,     g_calibDay);
+    EEPROM.put(EEPROM_CALIB_DATE_ADDR + 1, g_calibMonth);
+    EEPROM.put(EEPROM_CALIB_DATE_ADDR + 2, g_calibYearOff);
+    EEPROM.put(EEPROM_CALIB_DATE_ADDR + 3, g_calibHour);
+    EEPROM.put(EEPROM_CALIB_DATE_ADDR + 4, g_calibMin);
+  }
   eepromCommit();
   g_calibValid = true;
 }
@@ -1131,12 +1188,18 @@ static void webHandleData(AsyncWebServerRequest *request) {
   const int mod = g_calibValid ? computeMOD(g_currentO2, g_ppO2Target) : 0;
   const DateTime now = rtc.now();
   const uint8_t cellPct = cellLifePercent();
-  char json[272];
+  char caldate[20] = "";
+  if (g_calibDateValid) {
+    snprintf(caldate, sizeof(caldate), "%02d/%02d/%04d %02d:%02d",
+             g_calibDay, g_calibMonth, (int)g_calibYearOff + 2024,
+             g_calibHour, g_calibMin);
+  }
+  char json[320];
   snprintf(json, sizeof(json),
     "{\"o2\":%.1f,\"stable\":%s,\"mod\":%d,\"ppo2\":%.1f,"
     "\"locked\":%s,\"temp\":%.1f,\"cal\":%s,"
     "\"dt\":\"%04d-%02d-%02dT%02d:%02d\","
-    "\"rtcok\":%s,\"cell\":%d,\"cellmv\":%.1f}",
+    "\"rtcok\":%s,\"cell\":%d,\"cellmv\":%.1f,\"caldate\":\"%s\"}",
     g_currentO2,
     g_isStable  ? "true" : "false",
     mod,
@@ -1148,7 +1211,8 @@ static void webHandleData(AsyncWebServerRequest *request) {
     now.hour(), now.minute(),
     g_rtcOK     ? "true" : "false",
     cellPct,
-    g_calibMv
+    g_calibMv,
+    caldate
   );
   request->send(200, "application/json", json);
 }
@@ -1169,7 +1233,53 @@ static void webHandleSetTime(AsyncWebServerRequest *request) {
       }
     }
   }
+  g_rtcOK = true;
   request->send(200, "text/plain", "OK");
+}
+
+static void webHandleCalibrate(AsyncWebServerRequest *request) {
+  if (!g_isStable) {
+    request->send(200, "application/json", "{\"ok\":false,\"err\":\"instable\"}");
+    return;
+  }
+  const int16_t raw = ads.readADC_Differential_0_1();
+  const float   mv  = (float)raw * ADS_LSB_MV;
+  if (mv > 1.0f && mv < 50.0f) {
+    saveCalibration(mv, g_currentTempC);
+    resetStabilityBuffer();
+    const uint8_t pct = cellLifePercent();
+    if (pct < CELL_WARN_PERCENT) enterFeedback(FB_CELL_WEAK);
+    else                          enterFeedback(FB_CALIB_OK);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"ok\":true,\"mv\":%.1f,\"cell\":%d}", mv, pct);
+    request->send(200, "application/json", buf);
+  } else {
+    enterFeedback(FB_CALIB_FAIL);
+    request->send(200, "application/json", "{\"ok\":false,\"err\":\"tension\"}");
+  }
+}
+
+static void webHandleHistoryCsv(AsyncWebServerRequest *request) {
+  const uint8_t c = histCount();
+  String csv = "Date,Heure,Plongeur,O2 %,ppO2,MOD m\r\n";
+  for (uint8_t i = 0; i < c; i++) {
+    HistRecord r;
+    if (!histRead(i, r)) continue;
+    char nm[NAME_MAX_LEN + 1] = {0};
+    memcpy(nm, r.name, NAME_MAX_LEN);
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%02d/%02d/%04d,%02d:%02d,%s,%.1f,%.1f,%d\r\n",
+             r.day, r.month, (int)r.yearOffset + 2024,
+             r.hour, r.minute,
+             nm,
+             r.fO2_x10  / 10.0f,
+             r.ppO2_x10 / 10.0f,
+             (int)r.mod);
+    csv += buf;
+  }
+  AsyncWebServerResponse *resp = request->beginResponse(200, "text/csv", csv);
+  resp->addHeader("Content-Disposition", "attachment; filename=\"historique.csv\"");
+  request->send(resp);
 }
 
 static void webHandleHistory(AsyncWebServerRequest *request) {
@@ -1238,6 +1348,8 @@ void setup() {
   server.on("/history", HTTP_GET,  webHandleHistory);
   server.on("/ppo2",    HTTP_POST, webHandleSetPpO2);
   server.on("/settime", HTTP_POST, webHandleSetTime);
+  server.on("/calibrate",   HTTP_POST, webHandleCalibrate);
+  server.on("/history.csv", HTTP_GET,  webHandleHistoryCsv);
   // Portail captif : repond aux checks Android (/generate_204) et iOS
   server.on("/generate_204",              HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(204, "text/plain", ""); });
   server.on("/hotspot-detect.html",       HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"); });
@@ -1245,6 +1357,8 @@ void setup() {
   server.on("/connecttest.txt",           HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(200, "text/plain", "Microsoft Connect Test"); });
   server.on("/ncsi.txt",                  HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(200, "text/plain", "Microsoft NCSI"); });
   server.onNotFound([](AsyncWebServerRequest *r){ r->send(200, "text/html", HTML_PAGE); });
+  esp_task_wdt_init(10, true);
+  esp_task_wdt_add(NULL);
   server.begin();
   Serial.println("Serveur web demarre - http://192.168.4.1");
 
@@ -1315,6 +1429,7 @@ void setup() {
 
 void loop() {
   const uint32_t now = millis();
+  esp_task_wdt_reset();
 
   dnsServer.processNextRequest();
   updateTemperature();
