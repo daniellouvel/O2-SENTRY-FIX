@@ -78,7 +78,7 @@ static WebServer    server(80);
 static DNSServer    dnsServer;
 
 // Page HTML embarquée en flash (raw string literal)
-static const char HTML_PAGE[] PROGMEM = R"rawliteral(
+static const char HTML_PAGE[] = R"rawliteral(
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -1076,7 +1076,7 @@ static void performCalibration() {
 //  SERVEUR WEB — handlers
 // ============================================================================
 static void webHandleRoot() {
-  server.send_P(200, "text/html", HTML_PAGE);
+  server.send(200, "text/html", HTML_PAGE);
 }
 
 static void webHandleData() {
