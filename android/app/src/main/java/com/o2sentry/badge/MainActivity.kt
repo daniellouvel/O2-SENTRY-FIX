@@ -3,10 +3,13 @@ package com.o2sentry.badge
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.os.Build
 import android.os.Bundle
+import android.view.Menu
+import android.view.MenuItem
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.Toast
@@ -53,7 +56,21 @@ class MainActivity : AppCompatActivity() {
         binding.recyclerView.adapter = adapter
 
         binding.fab.setOnClickListener { showAddDiverDialog() }
+        binding.btnOpenWeb.setOnClickListener { openWebInterface() }
         refreshEmpty()
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.menu_main, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (item.itemId == R.id.action_web) {
+            openWebInterface()
+            return true
+        }
+        return super.onOptionsItemSelected(item)
     }
 
     override fun onResume() {
@@ -89,6 +106,13 @@ class MainActivity : AppCompatActivity() {
                 identifyTag(it)
             }
         }
+    }
+
+    // ── Web ────────────────────────────────────────────────────────────────────
+
+    private fun openWebInterface() {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("http://192.168.4.1"))
+        startActivity(intent)
     }
 
     // ── NFC ────────────────────────────────────────────────────────────────────
