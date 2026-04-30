@@ -113,6 +113,9 @@ button{width:100%;padding:13px;background:#0f3460;color:#4fc3f7;
 button:active{background:#1565c0}
 .msg{text-align:center;margin-top:8px;min-height:20px;color:#66bb6a;font-size:.9em}
 .foot{font-size:.7em;color:#444;text-align:center;margin-top:18px}
+input[type=datetime-local]{width:100%;padding:10px;background:#0f3460;color:#eee;
+  border:1px solid #4fc3f7;border-radius:8px;font-size:.95em;
+  font-family:monospace;margin:10px 0;color-scheme:dark}
 </style>
 </head>
 <body>
@@ -146,6 +149,14 @@ button:active{background:#1565c0}
 </div>
 
 <div class="card">
+<h2>Date / Heure</h2>
+<div class="row"><span class="lbl">RTC actuelle</span><span class="val" id="rtcv">--</span></div>
+<input type="datetime-local" id="dtp">
+<button onclick="setdt()">Appliquer</button>
+<div class="msg" id="dtmsg"></div>
+</div>
+
+<div class="card">
 <h2 style="display:flex;justify-content:space-between;align-items:center;cursor:pointer"
     onclick="tog()">
   Historique (50 dernieres analyses)
@@ -160,6 +171,7 @@ button:active{background:#1565c0}
 <div class="foot">O2-Sentry &bull; WiFi AP &bull; 192.168.4.1</div>
 
 <script>
+var dirty=false,dtInited=false;
 function upd(){
   fetch('/data').then(r=>r.json()).then(d=>{
     document.getElementById('o2v').textContent=d.o2.toFixed(1)+' %';
@@ -170,8 +182,15 @@ function upd(){
     document.getElementById('ppo2c').textContent=d.ppo2.toFixed(1)+(d.locked?' [VERR]':'');
     document.getElementById('temp').textContent=d.temp>-50?d.temp.toFixed(1)+' degC':'N/A';
     document.getElementById('cal').textContent=d.cal?'OK':'Non calibre';
-    document.getElementById(d.ppo2>=1.55?'r16':'r14').checked=true;
-    document.getElementById('lck').checked=d.locked;
+    if(!dirty){
+      document.getElementById(d.ppo2>=1.55?'r16':'r14').checked=true;
+      document.getElementById('lck').checked=d.locked;
+    }
+    if(d.dt){
+      var _p=d.dt.split('T'),_d=_p[0].split('-');
+      document.getElementById('rtcv').textContent=_d[2]+'/'+_d[1]+'/'+_d[0]+' '+_p[1];
+      if(!dtInited){document.getElementById('dtp').value=d.dt;dtInited=true;}
+    }
   }).catch(function(){});
 }
 function apply(){
@@ -181,10 +200,28 @@ function apply(){
   fetch('/ppo2',{method:'POST',
     headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b})
     .then(r=>r.text()).then(function(){
+      dirty=false;
       var m=document.getElementById('msg');
       m.textContent='Applique OK';
       setTimeout(function(){m.textContent='';},2500);
       upd();
+    });
+}
+document.querySelectorAll('input[name=pp]').forEach(function(el){
+  el.addEventListener('change',function(){dirty=true;});
+});
+document.getElementById('lck').addEventListener('change',function(){dirty=true;});
+function setdt(){
+  var v=document.getElementById('dtp').value;
+  if(!v)return;
+  fetch('/settime',{method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'dt='+encodeURIComponent(v)})
+    .then(r=>r.text()).then(function(){
+      var m=document.getElementById('dtmsg');
+      m.textContent='Heure reglée';
+      setTimeout(function(){m.textContent='';},2500);
+      dtInited=false;upd();
     });
 }
 var hOpen=true;
@@ -446,6 +483,8 @@ static void saveSettings() {
   if (g_ppO2Target >= 1.55f) b |= 0x01;
   if (g_ppO2Locked)          b |= 0x02;
   EEPROM.put(EEPROM_SETTINGS_ADDR, b);
+  const uint8_t magic = EEPROM_MAGIC;
+  EEPROM.put(EEPROM_MAGIC_ADDR, magic);
   eepromCommit();
 }
 
@@ -866,8 +905,8 @@ static void printLabel(const char *plongeurName) {
   printer.println(line);
 
   snprintf(line, sizeof(line),
-           "TEXT 20,225,\"2\",0,1,1,\"%04d-%02d-%02d  %02d:%02d\"",
-           now.year(), now.month(), now.day(),
+           "TEXT 20,225,\"2\",0,1,1,\"%02d/%02d/%04d  %02d:%02d\"",
+           now.day(), now.month(), now.year(),
            now.hour(), now.minute());
   printer.println(line);
 
@@ -1081,19 +1120,42 @@ static void webHandleRoot(AsyncWebServerRequest *request) {
 
 static void webHandleData(AsyncWebServerRequest *request) {
   const int mod = g_calibValid ? computeMOD(g_currentO2, g_ppO2Target) : 0;
-  char json[192];
+  const DateTime now = rtc.now();
+  char json[224];
   snprintf(json, sizeof(json),
     "{\"o2\":%.1f,\"stable\":%s,\"mod\":%d,\"ppo2\":%.1f,"
-    "\"locked\":%s,\"temp\":%.1f,\"cal\":%s}",
+    "\"locked\":%s,\"temp\":%.1f,\"cal\":%s,"
+    "\"dt\":\"%04d-%02d-%02dT%02d:%02d\"}",
     g_currentO2,
     g_isStable  ? "true" : "false",
     mod,
     g_ppO2Target,
     g_ppO2Locked ? "true" : "false",
     g_currentTempC,
-    g_calibValid ? "true" : "false"
+    g_calibValid ? "true" : "false",
+    now.year(), now.month(), now.day(),
+    now.hour(), now.minute()
   );
   request->send(200, "application/json", json);
+}
+
+static void webHandleSetTime(AsyncWebServerRequest *request) {
+  if (request->hasParam("dt", true)) {
+    const String dt = request->getParam("dt", true)->value();
+    // format attendu : "YYYY-MM-DDTHH:MM"
+    if (dt.length() >= 16) {
+      const int y  = dt.substring(0,  4).toInt();
+      const int mo = dt.substring(5,  7).toInt();
+      const int d  = dt.substring(8,  10).toInt();
+      const int h  = dt.substring(11, 13).toInt();
+      const int mi = dt.substring(14, 16).toInt();
+      if (y >= 2024 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31
+          && h >= 0 && h <= 23 && mi >= 0 && mi <= 59) {
+        rtc.adjust(DateTime(y, mo, d, h, mi, 0));
+      }
+    }
+  }
+  request->send(200, "text/plain", "OK");
 }
 
 static void webHandleHistory(AsyncWebServerRequest *request) {
@@ -1161,6 +1223,7 @@ void setup() {
   server.on("/data",    HTTP_GET,  webHandleData);
   server.on("/history", HTTP_GET,  webHandleHistory);
   server.on("/ppo2",    HTTP_POST, webHandleSetPpO2);
+  server.on("/settime", HTTP_POST, webHandleSetTime);
   // Portail captif : repond aux checks Android (/generate_204) et iOS
   server.on("/generate_204",              HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(204, "text/plain", ""); });
   server.on("/hotspot-detect.html",       HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"); });

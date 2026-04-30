@@ -129,6 +129,8 @@ L'ESP32 crée son propre réseau WiFi dès le démarrage — aucun routeur néce
 - Indicateur de stabilité, MOD, température, état de calibration
 - Choix ppO2 (1.4 / 1.6) depuis le navigateur
 - **Verrouillage ppO2** : les boutons GAUCHE et DROITE sont désactivés tant que le verrou est actif — utile pour fixer la ppO2 de référence avant de remettre l'appareil à un plongeur
+- **Réglage date / heure** : picker datetime natif du navigateur, appliqué directement au RTC sans manipuler les boutons physiques
+- **Historique des 50 dernières analyses** : tableau consulable depuis le navigateur
 
 Indicateur sur le LCD quand verrouillé :
 ```
@@ -202,6 +204,9 @@ Le tag `[OK]` s'affiche uniquement lorsque l'écart max−min sur les 15 derniè
 
 ### Mode Réglage de l'heure
 
+**Via l'interface web** (plus simple) : section "Date / Heure" → picker → Appliquer.
+
+**Via les boutons physiques** :
 1. **Appui long CENTRE** (3 s)
 2. Séquence : **Heure → Minute → Jour → Mois → Année**
 3. GAUCHE / DROITE pour modifier, CENTRE pour valider et passer au champ suivant
@@ -234,7 +239,7 @@ L'étiquette imprimée (50×30 mm) contient :
 │     O2: 32.0 %         │
 │     MOD: 34 m          │
 │     ppO2 ref: 1.4      │
-│  2026-04-27  14:32     │
+│  27/04/2026  14:32     │
 └────────────────────────┘
 ```
 
@@ -247,7 +252,7 @@ L'étiquette imprimée (50×30 mm) contient :
 │     O2: 32.0 %         │
 │     MOD: 34 m          │
 │     ppO2 ref: 1.4      │
-│  2026-04-27  14:32     │
+│  27/04/2026  14:32     │
 └────────────────────────┘
 ```
 
@@ -279,6 +284,7 @@ Gérées automatiquement par PlatformIO via [platformio.ini](platformio.ini) :
 - [OneWire](https://github.com/PaulStoffregen/OneWire) + [DallasTemperature](https://github.com/milesburton/Arduino-Temperature-Control-Library)
 - [Adafruit PN532](https://github.com/adafruit/Adafruit-PN532)
 - [Adafruit NeoPixel](https://github.com/adafruit/Adafruit_NeoPixel)
+- [ESPAsyncWebServer](https://github.com/me-no-dev/ESPAsyncWebServer) + [AsyncTCP](https://github.com/me-no-dev/AsyncTCP) (via GitHub — le registre PlatformIO ne résout plus `me-no-dev/` correctement)
 - `Wire`, `HardwareSerial`, `EEPROM` (intégrées à l'ESP32 Arduino framework)
 
 ---
