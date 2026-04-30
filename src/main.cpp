@@ -95,7 +95,7 @@ h1{text-align:center;padding:12px;color:#4fc3f7;font-size:1.3em}
 .row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #0f3460}
 .row:last-child{border-bottom:none}
 .lbl{color:#888}.val{font-weight:bold}
-.ok{color:#66bb6a}.warn{color:#ffa726}
+.ok{color:#66bb6a}.warn{color:#ffa726}.err{color:#ef5350}
 .sb{display:inline-block;padding:3px 12px;border-radius:12px;font-size:.8em}
 .sb-ok{background:#1b5e20;color:#a5d6a7}
 .sb-warn{background:#bf360c;color:#ffe0b2}
@@ -131,6 +131,8 @@ input[type=datetime-local]{width:100%;padding:10px;background:#0f3460;color:#eee
 <div class="row"><span class="lbl">ppO2 ref</span><span class="val" id="ppo2c">--</span></div>
 <div class="row"><span class="lbl">Temperature</span><span class="val" id="temp">--</span></div>
 <div class="row"><span class="lbl">Calibration</span><span class="val" id="cal">--</span></div>
+<div class="row"><span class="lbl">Cellule O2</span><span class="val" id="celv">--</span></div>
+<div class="row"><span class="lbl">Pile RTC</span><span class="val" id="rtcs">--</span></div>
 </div>
 
 <div class="card">
@@ -182,6 +184,12 @@ function upd(){
     document.getElementById('ppo2c').textContent=d.ppo2.toFixed(1)+(d.locked?' [VERR]':'');
     document.getElementById('temp').textContent=d.temp>-50?d.temp.toFixed(1)+' degC':'N/A';
     document.getElementById('cal').textContent=d.cal?'OK':'Non calibre';
+    var cv=document.getElementById('celv');
+    cv.textContent=d.cell+'% ('+d.cellmv.toFixed(1)+' mV)';
+    cv.className='val '+(d.cell>=80?'ok':(d.cell>=50?'warn':'err'));
+    var rs=document.getElementById('rtcs');
+    if(d.rtcok){rs.textContent='OK';rs.className='val ok';}
+    else{rs.textContent='Pile HS !';rs.className='val err';}
     if(!dirty){
       document.getElementById(d.ppo2>=1.55?'r16':'r14').checked=true;
       document.getElementById('lck').checked=d.locked;
@@ -348,6 +356,7 @@ static FeedbackKind g_feedback       = FB_NONE;
 static uint32_t     g_feedbackEnd    = 0;
 static uint32_t     g_splashEnd      = 0;
 static bool         g_pendingSetTime = false;
+static bool         g_rtcOK          = false;
 
 // ============================================================================
 //  ETAT CAPTEUR / UTILISATEUR
@@ -1121,11 +1130,13 @@ static void webHandleRoot(AsyncWebServerRequest *request) {
 static void webHandleData(AsyncWebServerRequest *request) {
   const int mod = g_calibValid ? computeMOD(g_currentO2, g_ppO2Target) : 0;
   const DateTime now = rtc.now();
-  char json[224];
+  const uint8_t cellPct = cellLifePercent();
+  char json[272];
   snprintf(json, sizeof(json),
     "{\"o2\":%.1f,\"stable\":%s,\"mod\":%d,\"ppo2\":%.1f,"
     "\"locked\":%s,\"temp\":%.1f,\"cal\":%s,"
-    "\"dt\":\"%04d-%02d-%02dT%02d:%02d\"}",
+    "\"dt\":\"%04d-%02d-%02dT%02d:%02d\","
+    "\"rtcok\":%s,\"cell\":%d,\"cellmv\":%.1f}",
     g_currentO2,
     g_isStable  ? "true" : "false",
     mod,
@@ -1134,7 +1145,10 @@ static void webHandleData(AsyncWebServerRequest *request) {
     g_currentTempC,
     g_calibValid ? "true" : "false",
     now.year(), now.month(), now.day(),
-    now.hour(), now.minute()
+    now.hour(), now.minute(),
+    g_rtcOK     ? "true" : "false",
+    cellPct,
+    g_calibMv
   );
   request->send(200, "application/json", json);
 }
@@ -1253,8 +1267,8 @@ void setup() {
   ads.begin();
 
   rtc.begin();
-  const bool rtcLost = !rtc.isrunning();
-  if (rtcLost) {
+  g_rtcOK = rtc.isrunning();
+  if (!g_rtcOK) {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
@@ -1293,7 +1307,7 @@ void setup() {
 
   g_mode           = MODE_SPLASH;
   g_splashEnd      = millis() + (g_calibValid ? SPLASH_MS : SPLASH_NOCAL_MS);
-  g_pendingSetTime = rtcLost;
+  g_pendingSetTime = !g_rtcOK;
   displaySplash();
 
   Serial.println("Setup termine.");
