@@ -31,7 +31,7 @@
 #include <Adafruit_PN532.h>
 #include <Adafruit_NeoPixel.h>
 #include <WiFi.h>
-#include <WebServer.h>
+#include <ESPAsyncWebServer.h>
 #include <DNSServer.h>
 
 // ============================================================================
@@ -74,7 +74,7 @@ static const uint8_t LCD_ADDR         = 0x27;
 // ============================================================================
 static const char*  WIFI_SSID = "O2-Sentry";
 static const char*  WIFI_PASS = "plongee24";  // min 8 car. ou "" pour réseau ouvert
-static WebServer    server(80);
+static AsyncWebServer server(80);
 static DNSServer    dnsServer;
 
 // Page HTML embarquée en flash (raw string literal)
@@ -1075,11 +1075,11 @@ static void performCalibration() {
 // ============================================================================
 //  SERVEUR WEB — handlers
 // ============================================================================
-static void webHandleRoot() {
-  server.send(200, "text/html", HTML_PAGE);
+static void webHandleRoot(AsyncWebServerRequest *request) {
+  request->send(200, "text/html", HTML_PAGE);
 }
 
-static void webHandleData() {
+static void webHandleData(AsyncWebServerRequest *request) {
   const int mod = g_calibValid ? computeMOD(g_currentO2, g_ppO2Target) : 0;
   char json[192];
   snprintf(json, sizeof(json),
@@ -1093,17 +1093,16 @@ static void webHandleData() {
     g_currentTempC,
     g_calibValid ? "true" : "false"
   );
-  server.send(200, "application/json", json);
+  request->send(200, "application/json", json);
 }
 
-static void webHandleHistory() {
+static void webHandleHistory(AsyncWebServerRequest *request) {
   const uint8_t c = histCount();
   String json = "[";
   for (uint8_t i = 0; i < c; i++) {
     HistRecord r;
     if (!histRead(i, r)) continue;
     if (i > 0) json += ",";
-    // Extraire le nom (pas null-terminé en EEPROM)
     char nm[NAME_MAX_LEN + 1] = {0};
     memcpy(nm, r.name, NAME_MAX_LEN);
     char buf[160];
@@ -1120,20 +1119,20 @@ static void webHandleHistory() {
     json += buf;
   }
   json += "]";
-  server.send(200, "application/json", json);
+  request->send(200, "application/json", json);
 }
 
-static void webHandleSetPpO2() {
-  if (server.hasArg("ppo2")) {
-    const float v = server.arg("ppo2").toFloat();
+static void webHandleSetPpO2(AsyncWebServerRequest *request) {
+  if (request->hasParam("ppo2", true)) {
+    const float v = request->getParam("ppo2", true)->value().toFloat();
     if (v >= 1.35f && v <= 1.45f)  g_ppO2Target = PPO2_STD;
     else if (v >= 1.55f)            g_ppO2Target = PPO2_MAX;
   }
-  if (server.hasArg("lock")) {
-    g_ppO2Locked = (server.arg("lock") == "1");
+  if (request->hasParam("lock", true)) {
+    g_ppO2Locked = (request->getParam("lock", true)->value() == "1");
   }
   saveSettings();
-  server.send(200, "text/plain", "OK");
+  request->send(200, "text/plain", "OK");
 }
 
 // ============================================================================
@@ -1155,6 +1154,7 @@ void setup() {
   Serial.printf("WiFi AP %s  IP=%s\n", apOK ? "OK" : "ECHEC",
                 WiFi.softAPIP().toString().c_str());
 
+  delay(200);  // laisse le temps a l'interface AP d'etre prete avant DNS
   dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
 
   server.on("/",        HTTP_GET,  webHandleRoot);
@@ -1162,12 +1162,12 @@ void setup() {
   server.on("/history", HTTP_GET,  webHandleHistory);
   server.on("/ppo2",    HTTP_POST, webHandleSetPpO2);
   // Portail captif : repond aux checks Android (/generate_204) et iOS
-  server.on("/generate_204",              HTTP_ANY, [](){ server.send(204, "text/plain", ""); });
-  server.on("/hotspot-detect.html",       HTTP_ANY, [](){ server.send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"); });
-  server.on("/library/test/success.html", HTTP_ANY, [](){ server.send(200, "text/html", "Success"); });
-  server.on("/connecttest.txt",           HTTP_ANY, [](){ server.send(200, "text/plain", "Microsoft Connect Test"); });
-  server.on("/ncsi.txt",                  HTTP_ANY, [](){ server.send(200, "text/plain", "Microsoft NCSI"); });
-  server.onNotFound(webHandleRoot);
+  server.on("/generate_204",              HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(204, "text/plain", ""); });
+  server.on("/hotspot-detect.html",       HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"); });
+  server.on("/library/test/success.html", HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(200, "text/html", "Success"); });
+  server.on("/connecttest.txt",           HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(200, "text/plain", "Microsoft Connect Test"); });
+  server.on("/ncsi.txt",                  HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(200, "text/plain", "Microsoft NCSI"); });
+  server.onNotFound([](AsyncWebServerRequest *r){ r->send(200, "text/html", HTML_PAGE); });
   server.begin();
   Serial.println("Serveur web demarre - http://192.168.4.1");
 
@@ -1240,7 +1240,6 @@ void loop() {
   const uint32_t now = millis();
 
   dnsServer.processNextRequest();
-  server.handleClient();
   updateTemperature();
   updateLED();
 
