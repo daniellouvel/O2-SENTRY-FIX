@@ -234,9 +234,10 @@ document.getElementById('lck').addEventListener('change',function(){dirty=true;}
 function setdt(){
   var v=document.getElementById('dtp').value;
   if(!v)return;
+  var p=v.split('T'),dt=p[0].split('-'),tm=(p[1]||'00:00').split(':');
+  var body='y='+dt[0]+'&mo='+dt[1]+'&d='+dt[2]+'&h='+tm[0]+'&mi='+tm[1];
   fetch('/settime',{method:'POST',
-    headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'dt='+encodeURIComponent(v)})
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
     .then(r=>r.text()).then(function(){
       var m=document.getElementById('dtmsg');
       m.textContent='Heure reglée';
@@ -1223,22 +1224,19 @@ static void webHandleData(AsyncWebServerRequest *request) {
 }
 
 static void webHandleSetTime(AsyncWebServerRequest *request) {
-  if (request->hasParam("dt", true)) {
-    const String dt = request->getParam("dt", true)->value();
-    // format attendu : "YYYY-MM-DDTHH:MM"
-    if (dt.length() >= 16) {
-      const int y  = dt.substring(0,  4).toInt();
-      const int mo = dt.substring(5,  7).toInt();
-      const int d  = dt.substring(8,  10).toInt();
-      const int h  = dt.substring(11, 13).toInt();
-      const int mi = dt.substring(14, 16).toInt();
-      if (y >= 2024 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31
-          && h >= 0 && h <= 23 && mi >= 0 && mi <= 59 && g_rtcPresent) {
-        rtc.adjust(DateTime(y, mo, d, h, mi, 0));
-      }
-    }
+  auto ip = [&](const char *k) -> int {
+    return request->hasParam(k, true) ? request->getParam(k, true)->value().toInt() : -1;
+  };
+  const int y  = ip("y");
+  const int mo = ip("mo");
+  const int d  = ip("d");
+  const int h  = ip("h");
+  const int mi = ip("mi");
+  if (y >= 2024 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31
+      && h >= 0 && h <= 23 && mi >= 0 && mi <= 59 && g_rtcPresent) {
+    rtc.adjust(DateTime(y, mo, d, h, mi, 0));
+    g_rtcOK = true;
   }
-  g_rtcOK = true;
   request->send(200, "text/plain", "OK");
 }
 
