@@ -381,6 +381,7 @@ static FeedbackKind g_feedback       = FB_NONE;
 static uint32_t     g_feedbackEnd    = 0;
 static uint32_t     g_splashEnd      = 0;
 static bool         g_pendingSetTime = false;
+static bool         g_rtcPresent     = false;
 static bool         g_rtcOK          = false;
 static bool     g_calibDateValid = false;
 static uint8_t  g_calibDay = 0, g_calibMonth = 0, g_calibYearOff = 0;
@@ -549,6 +550,10 @@ static void loadSettings() {
   g_ppO2Locked = (b & 0x02) != 0;
 }
 
+static DateTime rtcNow() {
+  return g_rtcPresent ? rtcNow() : DateTime(2024, 1, 1, 0, 0, 0);
+}
+
 static void saveCalibration(float mv, float tempC) {
   const bool firstTime = !g_calibValid;
   g_calibMv    = mv;
@@ -566,7 +571,7 @@ static void saveCalibration(float mv, float tempC) {
   EEPROM.put(EEPROM_MAGIC_ADDR, magic);
   // sauvegarde horodatage calibration
   {
-    const DateTime now = rtc.now();
+    const DateTime now = rtcNow();
     g_calibDay     = now.day();
     g_calibMonth   = now.month();
     g_calibYearOff = (now.year() >= 2024) ? (uint8_t)(now.year() - 2024) : 0;
@@ -728,7 +733,7 @@ static void clampEditDay() {
 }
 
 static void loadEditBufferFromRtc() {
-  DateTime n = rtc.now();
+  DateTime n = rtcNow();
   g_eYear  = n.year();
   g_eMonth = n.month();
   g_eDay   = n.day();
@@ -803,7 +808,7 @@ static void displayRead() {
   } else {
     const int mod  = g_calibValid ? computeMOD(g_currentO2, g_ppO2Target) : 0;
     const int px10 = (int)(g_ppO2Target * 10.0f + 0.5f);
-    const DateTime now = rtc.now();
+    const DateTime now = rtcNow();
     // 'L' si ppO2 verrouillé, ' ' sinon — reste 16 caractères
     snprintf(l2, sizeof(l2), "M:%3d p%d.%d%c%02d:%02d",
              mod, px10 / 10, px10 % 10,
@@ -931,7 +936,7 @@ static void displayFeedback() {
 //  IMPRESSION TSPL (TSC TH240) + AJOUT HISTORIQUE
 // ============================================================================
 static void printLabel(const char *plongeurName) {
-  const DateTime now = rtc.now();
+  const DateTime now = rtcNow();
   const int mod   = computeMOD(g_currentO2, g_ppO2Target);
   const int o2x10 = (int)(g_currentO2 * 10.0f + 0.5f);
   const int px10  = (int)(g_ppO2Target * 10.0f + 0.5f);
@@ -1186,7 +1191,7 @@ static void webHandleRoot(AsyncWebServerRequest *request) {
 
 static void webHandleData(AsyncWebServerRequest *request) {
   const int mod = g_calibValid ? computeMOD(g_currentO2, g_ppO2Target) : 0;
-  const DateTime now = rtc.now();
+  const DateTime now = rtcNow();
   const uint8_t cellPct = cellLifePercent();
   char caldate[20] = "";
   if (g_calibDateValid) {
@@ -1228,7 +1233,7 @@ static void webHandleSetTime(AsyncWebServerRequest *request) {
       const int h  = dt.substring(11, 13).toInt();
       const int mi = dt.substring(14, 16).toInt();
       if (y >= 2024 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31
-          && h >= 0 && h <= 23 && mi >= 0 && mi <= 59) {
+          && h >= 0 && h <= 23 && mi >= 0 && mi <= 59 && g_rtcPresent) {
         rtc.adjust(DateTime(y, mo, d, h, mi, 0));
       }
     }
@@ -1357,8 +1362,6 @@ void setup() {
   server.on("/connecttest.txt",           HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(200, "text/plain", "Microsoft Connect Test"); });
   server.on("/ncsi.txt",                  HTTP_ANY, [](AsyncWebServerRequest *r){ r->send(200, "text/plain", "Microsoft NCSI"); });
   server.onNotFound([](AsyncWebServerRequest *r){ r->send(200, "text/html", HTML_PAGE); });
-  esp_task_wdt_init(10, true);
-  esp_task_wdt_add(NULL);
   server.begin();
   Serial.println("Serveur web demarre - http://192.168.4.1");
 
@@ -1380,10 +1383,11 @@ void setup() {
   ads.setGain(GAIN_SIXTEEN);
   ads.begin();
 
-  rtc.begin();
-  g_rtcOK = rtc.isrunning();
-  if (!g_rtcOK) {
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  g_rtcPresent = rtc.begin();
+  Serial.printf("RTC DS1307 : %s\n", g_rtcPresent ? "OK" : "ABSENT - verifier cablage");
+  if (g_rtcPresent) {
+    g_rtcOK = rtc.isrunning();
+    if (!g_rtcOK) rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
   // ── UART2 ───────────────────────────────────────────────────────────────────
@@ -1424,6 +1428,8 @@ void setup() {
   g_pendingSetTime = !g_rtcOK;
   displaySplash();
 
+  esp_task_wdt_init(30, true);
+  esp_task_wdt_add(NULL);
   Serial.println("Setup termine.");
 }
 
@@ -1502,8 +1508,9 @@ void loop() {
       if (eC == BTN_SHORT) {
         g_field = (TimeField)(g_field + 1);
         if (g_field >= FIELD_DONE) {
-          rtc.adjust(DateTime(g_eYear, g_eMonth, g_eDay,
-                              g_eHour, g_eMin, 0));
+          if (g_rtcPresent)
+            rtc.adjust(DateTime(g_eYear, g_eMonth, g_eDay,
+                                g_eHour, g_eMin, 0));
           enterRead();
         }
       }
