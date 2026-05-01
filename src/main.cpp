@@ -286,15 +286,24 @@ function loadH(){
   }).catch(function(){});
 }
 function shareCSV(){
-  fetch('/history.csv').then(function(r){return r.blob();}).then(function(blob){
+  fetch('/history.csv').then(function(r){return r.text();}).then(function(txt){
+    var blob=new Blob([txt],{type:'text/csv'});
     var file=new File([blob],'historique_o2.csv',{type:'text/csv'});
-    if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
-      navigator.share({files:[file],title:'Historique O2 Sentry'});
-    } else {
+    function fallbackDownload(){
       var url=URL.createObjectURL(blob);
       var a=document.createElement('a');
       a.href=url;a.download='historique_o2.csv';a.click();
       URL.revokeObjectURL(url);
+    }
+    // 1) partage fichier (necessite HTTPS - Android Chrome >= 89)
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      navigator.share({files:[file],title:'Historique O2 Sentry'}).catch(fallbackDownload);
+    // 2) partage texte (fonctionne en HTTP sur la plupart des navigateurs mobiles)
+    } else if(navigator.share){
+      navigator.share({title:'Historique O2 Sentry - '+new Date().toLocaleDateString('fr-FR'),text:txt}).catch(fallbackDownload);
+    // 3) telechargement direct
+    } else {
+      fallbackDownload();
     }
   });
 }
