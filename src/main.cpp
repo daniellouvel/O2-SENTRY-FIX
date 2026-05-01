@@ -26,7 +26,6 @@
 #include <Adafruit_ADS1X15.h>
 #include <RTClib.h>
 #include <EEPROM.h>
-#include "esp_task_wdt.h"
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <Adafruit_PN532.h>
@@ -1442,15 +1441,11 @@ void setup() {
   g_pendingSetTime = !g_rtcOK;
   displaySplash();
 
-  esp_task_wdt_init(30, true);
-  esp_task_wdt_add(NULL);
   Serial.println("Setup termine.");
 }
 
 void loop() {
   const uint32_t now = millis();
-  esp_task_wdt_reset();
-
   dnsServer.processNextRequest();
   updateTemperature();
   updateLED();
