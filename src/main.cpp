@@ -381,6 +381,7 @@ static FeedbackKind g_feedback       = FB_NONE;
 static uint32_t     g_feedbackEnd    = 0;
 static uint32_t     g_splashEnd      = 0;
 static bool         g_pendingSetTime = false;
+static bool         g_adsPresent     = false;
 static bool         g_rtcPresent     = false;
 static bool         g_rtcOK          = false;
 static bool     g_calibDateValid = false;
@@ -672,6 +673,7 @@ static void resetStabilityBuffer() {
 }
 
 static void sampleO2() {
+  if (!g_adsPresent) return;
   const int16_t raw = ads.readADC_Differential_0_1();
   const float voltage = (float)raw * ADS_LSB_MV;
 
@@ -1183,6 +1185,7 @@ static void enterHistory() {
 }
 
 static void performCalibration() {
+  if (!g_adsPresent) { enterFeedback(FB_NOT_CALIB); return; }
   const int16_t raw = ads.readADC_Differential_0_1();
   const float mv    = (float)raw * ADS_LSB_MV;
   if (mv > 1.0f && mv < 50.0f) {
@@ -1256,6 +1259,10 @@ static void webHandleSetTime(AsyncWebServerRequest *request) {
 }
 
 static void webHandleCalibrate(AsyncWebServerRequest *request) {
+  if (!g_adsPresent) {
+    request->send(200, "application/json", "{\"ok\":false,\"err\":\"ads absent\"}");
+    return;
+  }
   if (!g_isStable) {
     request->send(200, "application/json", "{\"ok\":false,\"err\":\"instable\"}");
     return;
@@ -1394,7 +1401,8 @@ void setup() {
   lcd.clear();
 
   ads.setGain(GAIN_SIXTEEN);
-  ads.begin();
+  g_adsPresent = ads.begin();
+  Serial.printf("ADS1115 : %s\n", g_adsPresent ? "OK" : "ABSENT - verifier cablage I2C @0x48");
 
   g_rtcPresent = rtc.begin();
   Serial.printf("RTC DS1307 : %s\n", g_rtcPresent ? "OK" : "ABSENT - verifier cablage");
