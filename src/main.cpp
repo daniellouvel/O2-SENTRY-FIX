@@ -551,8 +551,24 @@ static void loadSettings() {
   g_ppO2Locked = (b & 0x02) != 0;
 }
 
+static DateTime g_cachedTime(2024, 1, 1, 0, 0, 0);
+static uint32_t g_lastRtcMs  = 0;
+static uint8_t  g_rtcErrCnt  = 0;
+
 static DateTime rtcNow() {
-  return g_rtcPresent ? rtcNow() : DateTime(2024, 1, 1, 0, 0, 0);
+  if (!g_rtcPresent) return g_cachedTime;
+  const uint32_t m = millis();
+  if (m - g_lastRtcMs < 1000) return g_cachedTime;  // cache 1 s
+  g_lastRtcMs = m;
+  const DateTime dt = rtc.now();
+  if (dt.year() >= 2000 && dt.year() <= 2099) {
+    g_cachedTime = dt;
+    g_rtcErrCnt  = 0;
+  } else if (++g_rtcErrCnt >= 5) {
+    g_rtcPresent = false;
+    Serial.println("RTC: trop d'erreurs consecutives, desactive");
+  }
+  return g_cachedTime;
 }
 
 static void saveCalibration(float mv, float tempC) {
@@ -1371,8 +1387,8 @@ void setup() {
 #endif
 
   // ── I2C ─────────────────────────────────────────────────────────────────────
-  Wire.setTimeOut(15);   // timeout court d'emblee, avant tout appel I2C
   Wire.begin();
+  Wire.setWireTimeout(15000, true); // 15 ms en µs, reset bus automatique sur timeout
 
   lcd.init();
   lcd.backlight();
