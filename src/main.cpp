@@ -153,6 +153,7 @@ input[type=datetime-local]{width:100%;padding:10px;background:#0f3460;color:#eee
 <h2>Calibration cellule O2</h2>
 <div class="row"><span class="lbl">Derniere calibration</span><span class="val" id="caldt">--</span></div>
 <div class="row"><span class="lbl">Cellule O2</span><span class="val" id="celv">--</span></div>
+<div class="row"><span class="lbl">Tension live</span><span class="val" id="livemv">--</span></div>
 <button onclick="doCalib()">Calibrer a l'air (20.9 %)</button>
 <div class="msg" id="calmsg"></div>
 </div>
@@ -198,6 +199,7 @@ function upd(){
     cv.textContent=d.cell+'% ('+d.cellmv.toFixed(1)+' mV)';
     cv.className='val '+(d.cell>=80?'ok':(d.cell>=50?'warn':'err'));
     document.getElementById('caldt').textContent=d.caldate||'Non calibre';
+    document.getElementById('livemv').textContent=d.livemv.toFixed(3)+' mV';
     var rs=document.getElementById('rtcs');
     if(d.rtcok){rs.textContent='OK';rs.className='val ok';}
     else{rs.textContent='Pile HS !';rs.className='val err';}
@@ -395,6 +397,7 @@ static float    g_o2Buffer[STABILITY_SAMPLES];
 static uint8_t  g_bufIdx          = 0;
 static uint8_t  g_bufFilled       = 0;
 static float    g_currentO2       = 0.0f;
+static float    g_currentMv       = 0.0f;
 static bool     g_isStable        = false;
 static float    g_calibMv         = 10.0f;
 static float    g_initialCalibMv  = 10.0f;
@@ -676,6 +679,7 @@ static void sampleO2() {
   if (!g_adsPresent) return;
   const int16_t raw = ads.readADC_Differential_0_1();
   const float voltage = (float)raw * ADS_LSB_MV;
+  g_currentMv = voltage;
 
   float o2 = (g_calibMv > 0.1f)
            ? (voltage / g_calibMv) * CALIB_REF_PERCENT
@@ -1223,7 +1227,7 @@ static void webHandleData(AsyncWebServerRequest *request) {
     "{\"o2\":%.1f,\"stable\":%s,\"mod\":%d,\"ppo2\":%.1f,"
     "\"locked\":%s,\"temp\":%.1f,\"cal\":%s,"
     "\"dt\":\"%04d-%02d-%02dT%02d:%02d\","
-    "\"rtcok\":%s,\"cell\":%d,\"cellmv\":%.1f,\"caldate\":\"%s\"}",
+    "\"rtcok\":%s,\"cell\":%d,\"cellmv\":%.1f,\"livemv\":%.3f,\"caldate\":\"%s\"}",
     g_currentO2,
     g_isStable  ? "true" : "false",
     mod,
@@ -1236,6 +1240,7 @@ static void webHandleData(AsyncWebServerRequest *request) {
     g_rtcOK     ? "true" : "false",
     cellPct,
     g_calibMv,
+    g_currentMv,
     caldate
   );
   request->send(200, "application/json", json);
