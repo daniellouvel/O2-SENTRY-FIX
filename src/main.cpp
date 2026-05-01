@@ -174,10 +174,9 @@ input[type=datetime-local]{width:100%;padding:10px;background:#0f3460;color:#eee
 </h2>
 <div id="hc">
 <div id="hl"><em style="color:#666">Chargement...</em></div>
-<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-<button onclick="loadH()" style="flex:1;min-width:120px">Rafraichir</button>
-<a href="/history.csv" download style="flex:1;min-width:120px;display:flex;align-items:center;justify-content:center;padding:13px;background:#0f3460;color:#4fc3f7;border:1px solid #4fc3f7;border-radius:8px;font-family:monospace;font-size:1em;text-decoration:none">Telecharger</a>
-<button onclick="shareCSV()" style="flex:1;min-width:120px">Partager</button>
+<div style="display:flex;gap:8px;margin-top:10px">
+<button onclick="loadH()" style="flex:1">Rafraichir</button>
+<a href="/history.csv" download style="flex:1;display:flex;align-items:center;justify-content:center;padding:13px;background:#0f3460;color:#4fc3f7;border:1px solid #4fc3f7;border-radius:8px;font-family:monospace;font-size:1em;text-decoration:none">Telecharger CSV</a>
 </div>
 </div>
 </div>
@@ -284,28 +283,6 @@ function loadH(){
     h+='</table>';
     el.innerHTML=h;
   }).catch(function(){});
-}
-function shareCSV(){
-  fetch('/history.csv').then(function(r){return r.text();}).then(function(txt){
-    var blob=new Blob([txt],{type:'text/csv'});
-    var file=new File([blob],'historique_o2.csv',{type:'text/csv'});
-    function fallbackDownload(){
-      var url=URL.createObjectURL(blob);
-      var a=document.createElement('a');
-      a.href=url;a.download='historique_o2.csv';a.click();
-      URL.revokeObjectURL(url);
-    }
-    // 1) partage fichier (necessite HTTPS - Android Chrome >= 89)
-    if(navigator.canShare&&navigator.canShare({files:[file]})){
-      navigator.share({files:[file],title:'Historique O2 Sentry'}).catch(fallbackDownload);
-    // 2) partage texte (fonctionne en HTTP sur la plupart des navigateurs mobiles)
-    } else if(navigator.share){
-      navigator.share({title:'Historique O2 Sentry - '+new Date().toLocaleDateString('fr-FR'),text:txt}).catch(fallbackDownload);
-    // 3) telechargement direct
-    } else {
-      fallbackDownload();
-    }
-  });
 }
 upd();
 loadH();
