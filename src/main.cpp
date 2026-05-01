@@ -1401,6 +1401,24 @@ void setup() {
   Wire.begin();
   Wire.setTimeout(15); // timeout I2C 15 ms
 
+  // Scan I2C : liste tous les peripheriques trouves
+  Serial.println("Scan I2C :");
+  int i2cFound = 0;
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("  0x%02X trouve", addr);
+      if (addr == 0x27 || addr == 0x3F) Serial.print(" <- LCD PCF8574");
+      if (addr == 0x48)                  Serial.print(" <- ADS1115");
+      if (addr == 0x68)                  Serial.print(" <- DS1307 RTC");
+      if (addr == 0x24 || addr == 0x48 || addr == 0x29) Serial.print(" <- PN532?");
+      Serial.println();
+      i2cFound++;
+    }
+  }
+  if (i2cFound == 0) Serial.println("  Aucun peripherique I2C detecte !");
+  Serial.println("Scan I2C termine.");
+
   lcd.init();
   lcd.backlight();
   lcd.clear();
