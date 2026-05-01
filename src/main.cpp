@@ -1388,7 +1388,7 @@ void setup() {
 
   // ── I2C ─────────────────────────────────────────────────────────────────────
   Wire.begin();
-  Wire.setWireTimeout(15000, true); // 15 ms en µs, reset bus automatique sur timeout
+  Wire.setTimeout(15); // timeout I2C 15 ms
 
   lcd.init();
   lcd.backlight();
